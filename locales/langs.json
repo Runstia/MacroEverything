@@ -1,0 +1,4 @@
+{
+  "en": { "name": "English",  "file": "en.json" },
+  "fr": { "name": "Français", "file": "fr.json" }
+}
