@@ -761,10 +761,12 @@ class MacroEverythingApp(tk.Tk):
     def _push_history(self):
         if not self._current_group:
             return
+        cur_idx = (self._current_group["macros"].index(self.current_macro)
+                   if self.current_macro in self._current_group["macros"] else 0)
         state = {
-            "group":  self._current_group,
-            "macros": copy.deepcopy(self._current_group["macros"]),
-            "cur_id": self.current_macro["id"] if self.current_macro else None,
+            "group":   self._current_group,
+            "macros":  copy.deepcopy(self._current_group["macros"]),
+            "cur_idx": cur_idx,
         }
         self._undo_stack.append(state)
         if len(self._undo_stack) > 50:
@@ -777,10 +779,12 @@ class MacroEverythingApp(tk.Tk):
         if not self._undo_stack:
             return
         if self._current_group:
+            cur_idx = (self._current_group["macros"].index(self.current_macro)
+                       if self.current_macro in self._current_group["macros"] else 0)
             self._redo_stack.append({
-                "group":  self._current_group,
-                "macros": copy.deepcopy(self._current_group["macros"]),
-                "cur_id": self.current_macro["id"] if self.current_macro else None,
+                "group":   self._current_group,
+                "macros":  copy.deepcopy(self._current_group["macros"]),
+                "cur_idx": cur_idx,
             })
         self._restore_state(self._undo_stack.pop())
 
@@ -788,19 +792,20 @@ class MacroEverythingApp(tk.Tk):
         if not self._redo_stack:
             return
         if self._current_group:
+            cur_idx = (self._current_group["macros"].index(self.current_macro)
+                       if self.current_macro in self._current_group["macros"] else 0)
             self._undo_stack.append({
-                "group":  self._current_group,
-                "macros": copy.deepcopy(self._current_group["macros"]),
-                "cur_id": self.current_macro["id"] if self.current_macro else None,
+                "group":   self._current_group,
+                "macros":  copy.deepcopy(self._current_group["macros"]),
+                "cur_idx": cur_idx,
             })
         self._restore_state(self._redo_stack.pop())
 
     def _restore_state(self, state):
         group = state["group"]
         group["macros"] = state["macros"]
-        cur_id = state["cur_id"]
-        macro  = next((m for m in group["macros"] if m["id"] == cur_id),
-                      group["macros"][0] if group["macros"] else None)
+        cur_idx = min(state["cur_idx"], len(group["macros"]) - 1)
+        macro   = group["macros"][cur_idx] if group["macros"] else None
         if macro:
             self._select_macro(macro, group)
         self._refresh_macro_list()
