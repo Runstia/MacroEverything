@@ -8,12 +8,13 @@ Classes :
 """
 
 import io
+import copy
 import base64
 import tkinter as tk
 
 from ..constants import COLORS, FONTS, NODE_TYPES, NODE_ICONS
 from ..utils import PIL_AVAILABLE, Image, ImageTk
-from ..models import _node_contains
+from ..models import _node_contains, _remap_ids
 from ..i18n import t as _t, node_label
 
 
@@ -563,23 +564,36 @@ class MacroTreeCanvas(tk.Canvas):
                        activebackground=COLORS["accent"],
                        activeforeground=COLORS["bg"])
         if node:
-            menu.add_command(label="Modifier",
+            menu.add_command(label=_t("menu.edit"),
                              command=lambda: self.app.edit_node(node))
-            menu.add_command(label="Commentaire",
+            menu.add_command(label=_t("menu.comment"),
                              command=lambda: self.app.edit_comment(node))
             menu.add_separator()
-            menu.add_command(label="Monter",
+            menu.add_command(label=_t("menu.move_up"),
                              command=lambda: self.app.move_node(node, -1))
-            menu.add_command(label="Descendre",
+            menu.add_command(label=_t("menu.move_down"),
                              command=lambda: self.app.move_node(node, +1))
             menu.add_separator()
-            menu.add_command(label="Ajouter apres",
+            menu.add_command(label=_t("menu.duplicate"),
+                             command=lambda: self.app.duplicate_node(node))
+            menu.add_command(label=_t("menu.add_after"),
                              command=lambda: self.app.add_node_after(node))
             menu.add_separator()
-            menu.add_command(label="Supprimer",
+            # Copier / Coller image (condition_screen et loop_while uniquement)
+            has_img = node["type"] in ("condition_screen", "loop_while")
+            if has_img:
+                menu.add_command(label=_t("menu.copy_image"),
+                                 command=lambda: self.app.copy_node_image(node))
+                has_clip = bool(getattr(self.app, "_img_clipboard", None))
+                paste_state = "normal" if has_clip else "disabled"
+                menu.add_command(label=_t("menu.paste_image"),
+                                 state=paste_state,
+                                 command=lambda: self.app.paste_node_image(node))
+                menu.add_separator()
+            menu.add_command(label=_t("menu.delete"),
                              command=lambda: self.app.delete_node(node))
         else:
-            menu.add_command(label="Ajouter un noeud",
+            menu.add_command(label=_t("menu.add_node"),
                              command=self.app.add_node_dialog)
         menu.post(event.x_root, event.y_root)
 

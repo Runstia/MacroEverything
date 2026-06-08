@@ -50,14 +50,26 @@ The **Record & Replay** node captures a sequence of actions in real time:
 ### Interface
 
 - **Visual tree** — each node displays with a parameter summary
-- **Right-click** a node → context menu (edit, move, delete)
+- **Right-click** a node → context menu (edit, move, duplicate, delete, copy/paste image)
 - **Double-click** a node → opens the parameter editor
 - **Right panel** → detailed properties of the selected node
-- **Coordinate picker** → fullscreen overlay for visual point selection
-- **Region capture** → rectangular screen area selection
+- **Coordinate picker** → overlay covering all monitors for visual point selection
+- **Region capture** → rectangular screen area selection across all monitors
 - **Global hotkeys** → run/stop/pause even when the app is in the background
+- **Settings panel** → debug overlay toggle (image detection visualization)
+- **Resolution scaling** — coordinates are automatically scaled when the playback resolution differs from the recording resolution
 - Bilingual **FR / EN** interface (Easy to add localization with json file)
 - Saved as `.macros` files (human-readable JSON)
+
+### Image detection (If screen contains / While screen)
+
+Detection runs in 3 passes, all heavy operations are C-level PIL (no Python pixel loops):
+
+1. **Thumbnail scan** — both the template and the screenshot are shrunk to ≤ 16 px. The thumbnail slides across the screen with a 4 px step (~3 000 positions). Score = colour SAD via PIL histogram. The 15 best zones are kept.
+2. **Full-resolution coarse scan** — SAD in greyscale around each of the 15 zones, step = template / 8. Finds the best candidate position.
+3. **Pixel-precise refinement** — exhaustive 1 px step scan in a ±step2 window around the candidate. Guarantees sub-pixel accuracy without re-scanning the whole screen.
+
+If the debug overlay is enabled (Settings), a coloured rectangle is drawn around the best match after each check: green = found, orange = close, red = not found; for you to change the correspondence ratio as needed.
 
 ### Dependencies
 

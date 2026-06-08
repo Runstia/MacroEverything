@@ -50,14 +50,26 @@ Le nœud **Enregistrer/Rejouer** permet de capturer une séquence d'actions en t
 ### Interface
 
 - **Arbre visuel** — chaque nœud s'affiche avec ses paramètres résumés
-- **Clic droit** sur un nœud → menu contextuel (modifier, déplacer, supprimer)
+- **Clic droit** sur un nœud → menu contextuel (modifier, déplacer, dupliquer, supprimer, copier/coller l'image)
 - **Double-clic** sur un nœud → ouvre l'éditeur de paramètres
 - **Panneau droit** → propriétés détaillées du nœud sélectionné
-- **Sélecteur de coordonnées** → overlay plein écran pour pointer visuellement
-- **Capture de région** → sélection rectangulaire de zone à l'écran
+- **Sélecteur de coordonnées** → overlay couvrant tous les moniteurs pour pointer visuellement
+- **Capture de région** → sélection rectangulaire de zone sur tous les moniteurs
 - **Raccourcis clavier globaux** → lancer/arrêter/pause même en arrière-plan
+- **Panneau Paramètres** → activation/désactivation de l'overlay de debug (détection d'image)
+- **Mise à l'échelle de résolution** — les coordonnées sont automatiquement adaptées si la résolution de lecture diffère de celle d'enregistrement
 - Interface bilingue **FR / EN** (Ajout de nouvelle langue facile via fichier json)
 - Sauvegarde en `.macros` (JSON lisible)
+
+### Détection d'image (Si écran contient / Tant que écran)
+
+La détection s'effectue en 3 passes, toutes les opérations lourdes sont exécutées en C via PIL (pas de boucle Python sur les pixels) :
+
+1. **Scan thumbnail** — le template et le screenshot sont réduits à ≤ 16 px. Le thumbnail glisse sur l'écran avec un pas de 4 px (~3 000 positions). Score = SAD couleur via histogramme PIL. Les 15 meilleures zones sont conservées.
+2. **Scan grossier pleine résolution** — SAD en niveaux de gris autour de chacune des 15 zones, pas = template / 8. Identifie le meilleur candidat.
+3. **Raffinement pixel-précis** — scan exhaustif au pas de 1 px dans une fenêtre ±step2 autour du candidat. Garantit une précision pixel sans re-scanner tout l'écran.
+
+Si l'overlay de debug est activé (Paramètres), un rectangle coloré s'affiche autour du meilleur résultat après chaque vérification : vert = trouvé, orange = proche, rouge = non trouvé; pour que vous puissiez changer le taux de correspondance en fonction.
 
 ### Dépendances
 

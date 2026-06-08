@@ -20,6 +20,22 @@ from ..models import new_node, _collect_labels, _collect_var_names
 from ..i18n import t as _t, node_label, cat_label
 
 
+def _get_virtual_screen():
+    """Retourne (x, y, largeur, hauteur) du bureau virtuel (tous les moniteurs)."""
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        vx = u32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+        vy = u32.GetSystemMetrics(77)   # SM_YVIRTUALSCREEN
+        vw = u32.GetSystemMetrics(78)   # SM_CXVIRTUALSCREEN
+        vh = u32.GetSystemMetrics(79)   # SM_CYVIRTUALSCREEN
+        if vw > 0 and vh > 0:
+            return vx, vy, vw, vh
+    except Exception:
+        pass
+    return 0, 0, tk.Tk().winfo_screenwidth(), tk.Tk().winfo_screenheight()
+
+
 # ─────────────────────────────────────────────
 #  DIALOGUE D'EDITION DE NOEUDS
 # ─────────────────────────────────────────────
@@ -506,7 +522,7 @@ class NodeEditorDialog(tk.Toplevel):
 
         def _dt():
             now = time.perf_counter()
-            dt  = max(0.0, now - state["last_t"])
+            dt  = round(max(0.0, now - state["last_t"]), 3)  # précision ms, évite e-xx
             state["last_t"] = now
             return dt
 
@@ -677,7 +693,9 @@ class NodeEditorDialog(tk.Toplevel):
         if "y" in self.vars: self.vars["y"].set(str(y))
         if PIL_AVAILABLE and ImageGrab:
             try:
-                px = ImageGrab.grab(bbox=(x, y, x + 1, y + 1)).getpixel((0, 0))
+                vx, vy, _, _ = _get_virtual_screen()
+                img = ImageGrab.grab(all_screens=True)
+                px = img.getpixel((x - vx, y - vy))
                 if "r" in self.vars: self.vars["r"].set(str(px[0]))
                 if "g" in self.vars: self.vars["g"].set(str(px[1]))
                 if "b" in self.vars: self.vars["b"].set(str(px[2]))
@@ -898,9 +916,13 @@ class PickerWindow(tk.Toplevel):
     def __init__(self, parent, callback):
         super().__init__(parent)
         self.callback = callback
-        self.attributes("-fullscreen", True)
+        vx, vy, vw, vh = _get_virtual_screen()
+        self._vx = vx
+        self._vy = vy
+        self.overrideredirect(True)
         self.attributes("-alpha", 0.25)
         self.attributes("-topmost", True)
+        self.geometry(f"{vw}x{vh}+{vx}+{vy}")
         self.configure(bg="black", cursor="crosshair")
         self.bind("<Button-1>", self._pick)
         self.bind("<Escape>",   lambda e: self._cancel())
@@ -912,10 +934,11 @@ class PickerWindow(tk.Toplevel):
                                   font=("Consolas", 12))
         self._pos_lbl.place(relx=0.5, rely=0.10, anchor="center")
         self.bind("<Motion>",
-                  lambda e: self._pos_lbl.configure(text=f"X: {e.x}   Y: {e.y}"))
+                  lambda e: self._pos_lbl.configure(
+                      text=f"X: {e.x + self._vx}   Y: {e.y + self._vy}"))
 
     def _pick(self, event):
-        x, y = event.x, event.y
+        x, y = event.x + self._vx, event.y + self._vy
         self.destroy()
         self.callback(x, y)
 
@@ -936,9 +959,15 @@ class RegionCaptureWindow(tk.Toplevel):
         self.callback    = callback
         self._start      = None
         self._rect       = None
-        self._screenshot = ImageGrab.grab() if (PIL_AVAILABLE and ImageGrab) else None
+        vx, vy, vw, vh   = _get_virtual_screen()
+        self._vx = vx
+        self._vy = vy
+        # Capture tous les moniteurs ; l'image a pour origine (vx, vy)
+        self._screenshot = (ImageGrab.grab(all_screens=True)
+                            if (PIL_AVAILABLE and ImageGrab) else None)
 
-        self.attributes("-fullscreen", True)
+        self.overrideredirect(True)
+        self.geometry(f"{vw}x{vh}+{vx}+{vy}")
         self.attributes("-topmost", True)
         self.configure(cursor="crosshair")
 

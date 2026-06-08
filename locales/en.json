@@ -1,12 +1,14 @@
 {
-  "menu.new":                    "New",
+  "menu.new":                    "New group",
   "menu.open":                   "Open",
   "menu.save":                   "Save",
   "menu.save_as":                "Save as",
+  "menu.save_all":               "Save all",
   "menu.hotkeys":                "Hotkeys",
   "menu.language":               "Language",
 
   "sidebar.my_macros":           "My macros",
+  "sidebar.unsaved_group":       "(unsaved group)",
 
   "toolbar.add_node":            "+ Add a node",
   "toolbar.undo":                "Undo",
@@ -212,5 +214,29 @@
   "hotkeys.run":             "Run",
   "hotkeys.stop":            "Stop",
   "hotkeys.pause":           "Pause / Resume",
-  "hotkeys.none":            "(none)"
+  "hotkeys.none":            "(none)",
+
+  "menu.edit":               "Edit",
+  "menu.comment":            "Comment",
+  "menu.move_up":            "Move up",
+  "menu.move_down":          "Move down",
+  "menu.duplicate":          "Duplicate",
+  "menu.add_after":          "Add after",
+  "menu.copy_image":         "Copy image",
+  "menu.paste_image":        "Paste image",
+  "menu.delete":             "Delete",
+  "menu.add_node":           "Add a node",
+  "menu.settings":           "Settings",
+
+  "group.rename":            "Rename group",
+  "group.rename_title":      "Rename group",
+  "group.rename_prompt":     "New file name (without extension):",
+  "group.delete":            "Delete group",
+  "group.delete_title":      "Delete group",
+  "group.delete_confirm":    "Delete group \u201c{name}\u201d and its file?",
+
+  "settings.title":              "Settings",
+  "settings.section_debug":      "DEBUG",
+  "settings.debug_overlay":      "Show detection overlay",
+  "settings.debug_overlay_hint": "Draws a colored rectangle around the best match found by image detection. Green = found, Orange = close, Red = not found."
 }

@@ -1,12 +1,14 @@
 {
-  "menu.new":                    "Nouveau",
+  "menu.new":                    "Nouveau groupe",
   "menu.open":                   "Ouvrir",
   "menu.save":                   "Sauvegarder",
   "menu.save_as":                "Enreg. sous",
+  "menu.save_all":               "Tout sauvegarder",
   "menu.hotkeys":                "Raccourcis clavier",
   "menu.language":               "Langue",
 
   "sidebar.my_macros":           "Mes macros",
+  "sidebar.unsaved_group":       "(groupe non sauvegardé)",
 
   "toolbar.add_node":            "+ Ajouter un noeud",
   "toolbar.undo":                "Annuler",
@@ -209,7 +211,31 @@
   "hotkeys.header":          "Touches de raccourci globales",
   "hotkeys.desc":            "Ces touches fonctionnent m\u00eame lorsque MacroEverything\nn'est pas au premier plan.",
   "hotkeys.run":             "Ex\u00e9cuter",
-  "hotkeys.stop":            "Arr\u00eater",
+  "hotkeys.stop":            "Arrêter",
   "hotkeys.pause":           "Pause / Reprendre",
-  "hotkeys.none":            "(aucune)"
+  "hotkeys.none":            "(aucune)",
+
+  "menu.edit":               "Modifier",
+  "menu.comment":            "Commentaire",
+  "menu.move_up":            "Monter",
+  "menu.move_down":          "Descendre",
+  "menu.duplicate":          "Dupliquer",
+  "menu.add_after":          "Ajouter après",
+  "menu.copy_image":         "Copier l'image",
+  "menu.paste_image":        "Coller l'image",
+  "menu.delete":             "Supprimer",
+  "menu.add_node":           "Ajouter un noeud",
+  "menu.settings":           "Paramètres",
+
+  "group.rename":            "Renommer le groupe",
+  "group.rename_title":      "Renommer le groupe",
+  "group.rename_prompt":     "Nouveau nom de fichier (sans extension) :",
+  "group.delete":            "Supprimer le groupe",
+  "group.delete_title":      "Supprimer le groupe",
+  "group.delete_confirm":    "Supprimer le groupe \u00ab\u00a0{name}\u00a0\u00bb et son fichier ?",
+
+  "settings.title":              "Paramètres",
+  "settings.section_debug":      "DEBUG",
+  "settings.debug_overlay":      "Afficher l'overlay de détection",
+  "settings.debug_overlay_hint": "Dessine un rectangle coloré autour de la meilleure correspondance trouvée par la détection d'image. Vert = trouvé, Orange = proche, Rouge = non trouvé."
 }

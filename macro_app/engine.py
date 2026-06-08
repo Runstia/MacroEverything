@@ -39,13 +39,14 @@ class _ReturnSignal(Exception):
 # ─────────────────────────────────────────────
 class MacroEngine:
     def __init__(self, macro: dict, on_step=None, on_done=None, on_error=None,
-                 macros_list=None, _parent=None):
+                 macros_list=None, _parent=None, debug_overlay: bool = False):
         self.macro        = macro
         self.on_step      = on_step
         self.on_done      = on_done
         self.on_error     = on_error
         self._parent      = _parent        # moteur parent pour call_macro
         self._macros_list = macros_list    # toutes les macros du fichier ouvert
+        self._debug_overlay = debug_overlay
         self.__stop       = False
         self.__pause      = False
         self._vars: dict         = {}   # variables numeriques (double) de la macro
@@ -198,7 +199,7 @@ class MacroEngine:
             self._focus_window(p.get("title", ""), bool(p.get("partial", True)))
 
         elif t in ("condition_screen", "condition_pixel"):
-            result = (self._check_screen_image(p)
+            result = (self._check_screen_image(p, single_shot=True)
                       if t == "condition_screen"
                       else self._check_pixel_color(p))
             children    = node.get("children", [[], []])
@@ -368,7 +369,7 @@ class MacroEngine:
                 while time.time() < end:
                     if self._stop:
                         return
-                    time.sleep(min(0.005, end - time.time()))
+                    time.sleep(max(0.0, min(0.005, end - time.time())))
             at = act["t"]
             ax = round(act.get("x", 0) * self._sx) + ox
             ay = round(act.get("y", 0) * self._sy) + oy
@@ -510,8 +511,20 @@ class MacroEngine:
             time.sleep(0.15)
 
     # ── Detection d'ecran ─────────────────────
-    def _check_screen_image(self, p: dict) -> bool:
-        """Recherche rapide d'image via ImageChops (C-level PIL). Timeout 10 s."""
+    def _check_screen_image(self, p: dict, single_shot: bool = False) -> bool:
+        """Detection d'image en 2 passes, 100 % C-level PIL, sans boucle Python
+        sur les pixels.
+
+        Passe 1 — Thumbnail RGB ≤ 16 px : redimensionne template ET écran au même
+                   facteur, glisse avec pas=4 px en espace thumbnail (~3 000 positions).
+                   Score : SAD couleur via histogramme PIL (768 itérations Python max
+                   par position). Retourne les 15 meilleures zones.
+                   → Fonctionne sur fonds unis ET sur images structurées car compare
+                     la RÉPARTITION SPATIALE DES COULEURS, pas uniquement les contours.
+
+        Passe 2 — SAD niveaux de gris plein écran autour des 15 zones, pas=min/8.
+                   Score précis sur le template entier. Retourne position + score final.
+        """
         if not PIL_AVAILABLE or not Image or not ImageGrab or not ImageChops:
             return False
         template_b64 = p.get("template_b64", "")
@@ -521,62 +534,200 @@ class MacroEngine:
         region    = p.get("region")
 
         import io, base64
+
+        def _sad_rgb(a, b):
+            """SAD moyen par pixel par canal [0..255], C-level PIL."""
+            h = ImageChops.difference(a, b).histogram()  # 768 vals (R,G,B)
+            n = (a.size[0] * a.size[1]) or 1
+            return sum((i % 256) * h[i] for i in range(768)) / (n * 3)
+
+        def _sad_gray(a, b):
+            """SAD moyen par pixel [0..255], C-level PIL."""
+            h = ImageChops.difference(a, b).histogram()  # 256 vals
+            n = (a.size[0] * a.size[1]) or 1
+            return sum(i * c for i, c in enumerate(h)) / n
+
         try:
-            tmpl = Image.open(io.BytesIO(base64.b64decode(template_b64))).convert("L")
-            tw, th = tmpl.size
-            if tw < 2 or th < 2:
+            # ── Charger le template ───────────────────────────────────
+            tmpl_rgb = Image.open(
+                io.BytesIO(base64.b64decode(template_b64))).convert("RGB")
+            tw, th = tmpl_rgb.size
+            if tw < 4 or th < 4:
                 return False
-            # Mise a l'echelle pour la resolution de l'ecran actuel
+
+            # Mise à l'échelle résolution enregistrée → actuelle
             if self._sx != 1.0 or self._sy != 1.0:
-                tw = max(1, round(tw * self._sx))
-                th = max(1, round(th * self._sy))
-                tmpl = tmpl.resize((tw, th), Image.NEAREST)
-            scale = min(1.0, 200 / max(tw, th))
-            if scale < 1.0:
-                tmpl = tmpl.resize((max(1, int(tw * scale)),
-                                    max(1, int(th * scale))),
-                                   Image.NEAREST)
-            deadline = __import__("time").time() + 10
-            while __import__("time").time() < deadline:
+                tw = max(4, round(tw * self._sx))
+                th = max(4, round(th * self._sy))
+                tmpl_rgb = tmpl_rgb.resize((tw, th), Image.BILINEAR)
+
+            tmpl_gray = tmpl_rgb.convert("L")
+
+            # ── Thumbnail passe 1 (≤16 px sur le grand côté) ─────────
+            THUMB  = 16
+            s      = THUMB / max(tw, th)
+            tw_t   = max(2, round(tw * s))
+            th_t   = max(2, round(th * s))
+            tmpl_t = tmpl_rgb.resize((tw_t, th_t), Image.BOX)
+
+            # ── Origine région ────────────────────────────────────────
+            ox, oy = (self._sc(int(region[0]), int(region[1]))
+                      if region else (0, 0))
+
+            STEP_T  = 4    # pas dans l'espace thumbnail
+            TOP_N   = 15   # candidats transmis à passe 2
+
+            deadline   = time.time() + (0 if single_shot else 10)
+            first_pass = True
+            best_score = 0.0
+            best_rx, best_ry = ox, oy
+
+            while first_pass or time.time() < deadline:
+                first_pass = False
                 if self._stop:
                     return False
+
+                bbox = None
                 if region:
-                    x1, y1 = self._sc(int(region[0]), int(region[1]))
                     x2, y2 = self._sc(int(region[2]), int(region[3]))
-                    bbox = (x1, y1, x2, y2)
-                else:
-                    bbox = None
-                screen = ImageGrab.grab(bbox=bbox).convert("L")
-                if scale < 1.0:
-                    screen = screen.resize(
-                        (max(1, int(screen.width  * scale)),
-                         max(1, int(screen.height * scale))),
-                        Image.NEAREST)
-                sw, sh = screen.size
-                stw, sth = tmpl.size
-                if sw < stw or sh < sth:
-                    __import__("time").sleep(0.2)
+                    bbox   = (ox, oy, x2, y2)
+
+                screen_rgb  = ImageGrab.grab(bbox=bbox).convert("RGB")
+                screen_gray = screen_rgb.convert("L")
+                sw, sh      = screen_rgb.size
+                if sw < tw or sh < th:
+                    time.sleep(0.1)
                     continue
-                best = 0.0
-                for sy in range(0, sh - sth + 1, max(1, sth // 4)):
-                    for sx in range(0, sw - stw + 1, max(1, stw // 4)):
-                        crop = screen.crop((sx, sy, sx + stw, sy + sth))
-                        diff = ImageChops.difference(crop, tmpl)
-                        pixels = list(diff.getdata())
-                        if not pixels:
-                            continue
-                        avg = sum(pixels) / len(pixels)
-                        score = 1.0 - avg / 255.0
-                        if score > best:
-                            best = score
-                        if best >= threshold:
-                            return True
-                if best >= threshold:
+
+                # ── Passe 1 : thumbnail RGB ───────────────────────────
+                scr_t_w = max(tw_t + 1, round(sw * s))
+                scr_t_h = max(th_t + 1, round(sh * s))
+                scr_t   = screen_rgb.resize((scr_t_w, scr_t_h), Image.BOX)
+
+                cands = []
+                for cy in range(0, scr_t_h - th_t + 1, STEP_T):
+                    for cx in range(0, scr_t_w - tw_t + 1, STEP_T):
+                        crop_t  = scr_t.crop((cx, cy, cx + tw_t, cy + th_t))
+                        sad_val = _sad_rgb(crop_t, tmpl_t)
+                        score_t = 1.0 - sad_val / 255.0
+                        # Coordonnées dans l'espace plein écran (relatif au bbox)
+                        fx = min(sw - tw, max(0, round(cx / s)))
+                        fy = min(sh - th, max(0, round(cy / s)))
+                        cands.append((score_t, fx, fy))
+
+                cands.sort(reverse=True)
+
+                # ── Passe 2 : SAD pleine résolution, pas grossier ─────
+                # Marge couvre l'incertitude du pas thumbnail + zone tampon
+                margin = round(STEP_T / s) + max(tw // 8, th // 8)
+                step2  = max(2, min(tw, th) // 8)
+
+                iter_best = 0.0
+                iter_rx   = ox
+                iter_ry   = oy
+
+                seen = set()   # evite de re-scanner zones deja couvertes
+                for _, cand_x, cand_y in cands[:TOP_N]:
+                    if self._stop:
+                        return False
+                    x0 = max(0,       cand_x - margin)
+                    y0 = max(0,       cand_y - margin)
+                    x1 = min(sw - tw, cand_x + margin)
+                    y1 = min(sh - th, cand_y + margin)
+                    zone_key = (x0 // max(margin, 1), y0 // max(margin, 1))
+                    if zone_key in seen:
+                        continue
+                    seen.add(zone_key)
+
+                    for fy2 in range(y0, y1 + 1, step2):
+                        for fx2 in range(x0, x1 + 1, step2):
+                            crop  = screen_gray.crop((fx2, fy2, fx2 + tw, fy2 + th))
+                            score = 1.0 - _sad_gray(crop, tmpl_gray) / 255.0
+                            if score > iter_best:
+                                iter_best = score
+                                iter_rx   = fx2
+                                iter_ry   = fy2
+
+                # ── Passe 3 : raffinement pixel-précis ────────────────
+                # Fenêtre ±step2 autour du meilleur candidat P2, pas = 1 px
+                p3x0 = max(0,       iter_rx - step2)
+                p3y0 = max(0,       iter_ry - step2)
+                p3x1 = min(sw - tw, iter_rx + step2)
+                p3y1 = min(sh - th, iter_ry + step2)
+                for fy3 in range(p3y0, p3y1 + 1):
+                    for fx3 in range(p3x0, p3x1 + 1):
+                        crop  = screen_gray.crop((fx3, fy3, fx3 + tw, fy3 + th))
+                        score = 1.0 - _sad_gray(crop, tmpl_gray) / 255.0
+                        if score > iter_best:
+                            iter_best = score
+                            iter_rx   = fx3
+                            iter_ry   = fy3
+
+                best_score = iter_best
+                best_rx    = ox + iter_rx
+                best_ry    = oy + iter_ry
+
+                if best_score >= threshold:
+                    self._show_debug_overlay(best_rx, best_ry, tw, th, best_score)
                     return True
-                __import__("time").sleep(0.2)
+
+                if single_shot:
+                    self._show_debug_overlay(best_rx, best_ry, tw, th, best_score)
+                    break
+
+                self._show_debug_overlay(best_rx, best_ry, tw, th, best_score)
+                time.sleep(0.15)
+
         except Exception:
             pass
         return False
+
+    def _show_debug_overlay(self, x: int, y: int, w: int, h: int, score: float) -> None:
+        """Dessine un rectangle de debug autour de la zone detectee (GDI, 2 s).
+        Actif uniquement si self._debug_overlay est True.
+        Vert  = trouve (score >= 0.85),  Orange = presque,  Rouge = loin.
+        """
+        if not self._debug_overlay:
+            return
+        if not WINDOWS or ctypes is None:
+            return
+        import threading
+        def _run():
+            try:
+                user32 = ctypes.windll.user32
+                gdi32  = ctypes.windll.gdi32
+                # Couleur en fonction du score (BGR pour GDI)
+                if score >= 0.85:
+                    bgr = 0x00CC00        # vert
+                elif score >= 0.60:
+                    bgr = 0x0099FF        # orange
+                else:
+                    bgr = 0x3C3CFF        # rouge
+                label = f"Score: {score:.3f}"
+                end = time.time() + 2.0
+                while time.time() < end:
+                    dc = user32.GetDC(0)
+                    # Rectangle
+                    pen      = gdi32.CreatePen(0, 3, bgr)        # PS_SOLID
+                    old_pen  = gdi32.SelectObject(dc, pen)
+                    null_br  = gdi32.GetStockObject(5)           # NULL_BRUSH
+                    old_br   = gdi32.SelectObject(dc, null_br)
+                    gdi32.Rectangle(dc, x, y, x + w, y + h)
+                    gdi32.SelectObject(dc, old_pen)
+                    gdi32.SelectObject(dc, old_br)
+                    gdi32.DeleteObject(pen)
+                    # Label score
+                    gdi32.SetBkMode(dc, 1)           # TRANSPARENT
+                    gdi32.SetTextColor(dc, bgr)
+                    user32.DrawTextW(dc, label, len(label),
+                                     ctypes.byref(ctypes.wintypes.RECT(x, max(0, y - 20),
+                                                                        x + 160, y)),
+                                     0x0025)          # DT_LEFT|DT_SINGLELINE|DT_VCENTER
+                    user32.ReleaseDC(0, dc)
+                    time.sleep(0.05)
+            except Exception:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
 
     def _check_pixel_color(self, p: dict) -> bool:
         if not PIL_AVAILABLE or not ImageGrab:
