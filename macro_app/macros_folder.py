@@ -7,12 +7,12 @@ Toutes les macros sont stockees dans macros/ (cree automatiquement).
 import os
 import shutil
 
+from .paths import get_user_data_dir
+
 
 def get_macros_dir() -> str:
-    """Retourne (et cree si absent) le dossier macros/ a cote de main.py."""
-    folder = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "macros")
-    )
+    """Retourne (et cree si absent) le dossier macros/ dans les données utilisateur."""
+    folder = os.path.join(get_user_data_dir(), "macros")
     os.makedirs(folder, exist_ok=True)
     return folder
 

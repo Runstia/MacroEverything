@@ -39,27 +39,38 @@ class _ReturnSignal(Exception):
 # ─────────────────────────────────────────────
 class MacroEngine:
     def __init__(self, macro: dict, on_step=None, on_done=None, on_error=None,
-                 macros_list=None, _parent=None, debug_overlay: bool = False):
+                 macros_list=None, _parent=None, debug_overlay: bool = False,
+                 _call_stack: set = None):
         self.macro        = macro
         self.on_step      = on_step
         self.on_done      = on_done
         self.on_error     = on_error
-        self._parent      = _parent        # moteur parent pour call_macro
-        self._macros_list = macros_list    # toutes les macros du fichier ouvert
+        self._parent      = _parent
+        self._macros_list = macros_list
         self._debug_overlay = debug_overlay
+        self._call_stack: set = _call_stack if _call_stack is not None else set()
         self.__stop       = False
         self.__pause      = False
-        self._vars: dict         = {}   # variables numeriques (double) de la macro
-        self._return_value: bool = False  # valeur retournee par stop_return
+        self._vars: dict         = {}
+        self._return_value: bool = False
+        # Position de la derniere image trouvee (pour action_click_image)
+        self._last_found_x: int = 0
+        self._last_found_y: int = 0
+        self._last_found_w: int = 0
+        self._last_found_h: int = 0
+        # Thread unique pour l'overlay de debug
+        self._dbg_thread   = None
+        self._dbg_state    = None
 
         # Facteurs d'echelle resolution (macro enregistree vs ecran actuel)
+        # Utilise le bureau virtuel pour prendre en compte les configurations multi-ecran
         self._sx: float = 1.0
         self._sy: float = 1.0
         rec_w = int(macro.get("res_w", 0))
         rec_h = int(macro.get("res_h", 0))
         if rec_w > 0 and rec_h > 0 and WINDOWS and ctypes:
-            cur_w = ctypes.windll.user32.GetSystemMetrics(0)  # SM_CXSCREEN
-            cur_h = ctypes.windll.user32.GetSystemMetrics(1)  # SM_CYSCREEN
+            cur_w = ctypes.windll.user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            cur_h = ctypes.windll.user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
             if cur_w > 0 and cur_h > 0:
                 self._sx = cur_w / rec_w
                 self._sy = cur_h / rec_h
@@ -99,13 +110,12 @@ class MacroEngine:
     # ── Boucle principale ─────────────────────
     def run(self):
         try:
-            self._run_top_level(self.macro["nodes"])
-            if self.macro.get("loop") and not self._stop:
-                self._stop = False
-                self.run()
-            else:
-                if self.on_done:
-                    self.on_done()
+            while True:
+                self._run_top_level(self.macro["nodes"])
+                if not self.macro.get("loop") or self._stop:
+                    break
+            if self.on_done:
+                self.on_done()
         except Exception as e:
             if self.on_error:
                 self.on_error(str(e))
@@ -193,7 +203,14 @@ class MacroEngine:
         elif t == "action_run":
             cmd = p.get("command", "")
             if cmd:
-                os.startfile(cmd) if os.path.exists(cmd) else os.system(cmd)
+                if os.path.exists(cmd):
+                    os.startfile(cmd)
+                else:
+                    import subprocess
+                    subprocess.Popen(
+                        cmd, shell=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                    )
 
         elif t == "action_focus":
             self._focus_window(p.get("title", ""), bool(p.get("partial", True)))
@@ -237,12 +254,6 @@ class MacroEngine:
         elif t == "stop_return":
             val = str(p.get("value", "False")) == "True"
             raise _ReturnSignal(val)
-            name = p.get("name", "").strip()
-            if name:
-                try:
-                    self._vars[name] = float(p.get("value", 0))
-                except (ValueError, TypeError):
-                    self._vars[name] = 0.0
 
         elif t == "var_add":
             name = p.get("name", "").strip()
@@ -309,10 +320,30 @@ class MacroEngine:
             false_nodes = children[1] if len(children) > 1 else []
             self._execute_nodes(true_nodes if result else false_nodes)
 
+        elif t == "condition_switch":
+            name     = p.get("variable", "").strip()
+            cases    = p.get("cases", [])
+            val      = self._vars.get(name, 0.0)
+            children = node.get("children", [])
+            matched  = len(cases)   # index de la branche default
+            for i, case_val in enumerate(cases):
+                try:
+                    if val == float(case_val):
+                        matched = i
+                        break
+                except (ValueError, TypeError):
+                    if str(val) == str(case_val):
+                        matched = i
+                        break
+            if matched < len(children):
+                self._execute_nodes(children[matched])
+
         elif t == "call_macro":
             macro_name = p.get("macro_name", "").strip()
             return_val = False
             if macro_name and self._macros_list:
+                if macro_name in self._call_stack:
+                    raise ValueError(f"Appel circulaire détecté : '{macro_name}'")
                 target = next(
                     (m for m in self._macros_list if m.get("name") == macro_name),
                     None
@@ -325,8 +356,9 @@ class MacroEngine:
                         on_done=None,
                         on_error=self.on_error,
                         _parent=self,
+                        _call_stack=self._call_stack | {macro_name},
                     )
-                    sub._vars = self._vars   # partage les variables
+                    sub._vars = self._vars
                     sub._run_top_level(target["nodes"])
                     return_val = sub._return_value
             children    = node.get("children", [[], []])
@@ -336,6 +368,23 @@ class MacroEngine:
 
         elif t == "record_replay":
             self._exec_record_replay(p)
+
+        elif t == "action_click_image":
+            found = self._check_screen_image(p, single_shot=True)
+            if found:
+                click_mode = p.get("click_mode", "center")
+                if click_mode == "center" and self._last_found_w > 0:
+                    cx = self._last_found_x + self._last_found_w // 2
+                    cy = self._last_found_y + self._last_found_h // 2
+                else:
+                    cx = self._last_found_x + int(p.get("offset_x", 0))
+                    cy = self._last_found_y + int(p.get("offset_y", 0))
+                self._mouse_click(cx, cy,
+                                  p.get("button", "left"),
+                                  int(p.get("count", 1)))
+
+        elif t == "action_window_layout":
+            self._setup_window(p)
 
     # ── Enregistrement / Relecture d'inputs ───
     def _exec_record_replay(self, p: dict) -> None:
@@ -482,10 +531,10 @@ class MacroEngine:
                 ctypes.windll.user32.keybd_event(0x10, 0, 0x0002, 0)
             time.sleep(0.02)
 
-    def _focus_window(self, title: str, partial: bool = True) -> None:
-        """Amene une fenetre au premier plan par titre (exact ou partiel)."""
+    def _find_window(self, title: str, partial: bool = True) -> int:
+        """Retourne le HWND d'une fenetre par titre exact ou partiel, ou 0."""
         if not WINDOWS or not title or not ctypes:
-            return
+            return 0
         hwnd = ctypes.windll.user32.FindWindowW(None, title)
         if not hwnd and partial:
             found    = ctypes.c_size_t(0)
@@ -502,13 +551,73 @@ class MacroEngine:
                 return True
             ctypes.windll.user32.EnumWindows(EnumProc(_cb), 0)
             hwnd = found.value
+        return hwnd
+
+    def _focus_window(self, title: str, partial: bool = True) -> None:
+        """Amene une fenetre au premier plan par titre (exact ou partiel)."""
+        hwnd = self._find_window(title, partial)
         if hwnd:
-            # SW_RESTORE (9) uniquement si la fenetre est minimisee,
-            # pour eviter de changer taille/position si elle est deja visible
             if ctypes.windll.user32.IsIconic(hwnd):
                 ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
             ctypes.windll.user32.SetForegroundWindow(hwnd)
             time.sleep(0.15)
+
+    def _setup_window(self, p: dict) -> None:
+        """Positionne et/ou redimensionne une fenetre par titre."""
+        if not WINDOWS or not ctypes:
+            return
+        title   = p.get("title", "")
+        partial = bool(p.get("partial", True))
+        preset  = p.get("preset", "center")
+        scale   = bool(p.get("scale_with_res", True))
+
+        hwnd = self._find_window(title, partial)
+        if not hwnd:
+            return
+
+        # Dimensions actuelles de la fenetre
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        cur_w = rect.right  - rect.left
+        cur_h = rect.bottom - rect.top
+
+        # Dimensions cibles (0 = conserver actuelle)
+        req_w = int(p.get("width",  0))
+        req_h = int(p.get("height", 0))
+        if scale and (self._sx != 1.0 or self._sy != 1.0):
+            if req_w > 0:
+                req_w = max(1, round(req_w * self._sx))
+            if req_h > 0:
+                req_h = max(1, round(req_h * self._sy))
+        w = req_w if req_w > 0 else cur_w
+        h = req_h if req_h > 0 else cur_h
+
+        # Ecran principal pour les presets
+        scr_w = ctypes.windll.user32.GetSystemMetrics(0)
+        scr_h = ctypes.windll.user32.GetSystemMetrics(1)
+
+        presets = {
+            "center":       ((scr_w - w) // 2, (scr_h - h) // 2),
+            "top_left":     (0, 0),
+            "top_right":    (scr_w - w, 0),
+            "bottom_left":  (0, scr_h - h),
+            "bottom_right": (scr_w - w, scr_h - h),
+        }
+
+        if preset in presets:
+            x, y = presets[preset]
+        else:  # custom
+            x = int(p.get("x", 0))
+            y = int(p.get("y", 0))
+            if scale:
+                x = round(x * self._sx)
+                y = round(y * self._sy)
+
+        SWP_NOACTIVATE = 0x0010
+        SWP_NOZORDER   = 0x0004
+        ctypes.windll.user32.SetWindowPos(hwnd, 0, x, y, w, h,
+                                          SWP_NOACTIVATE | SWP_NOZORDER)
+        time.sleep(0.05)
 
     # ── Detection d'ecran ─────────────────────
     def _check_screen_image(self, p: dict, single_shot: bool = False) -> bool:
@@ -668,6 +777,10 @@ class MacroEngine:
                 best_ry    = oy + iter_ry
 
                 if best_score >= threshold:
+                    self._last_found_x = best_rx
+                    self._last_found_y = best_ry
+                    self._last_found_w = tw
+                    self._last_found_h = th
                     self._show_debug_overlay(best_rx, best_ry, tw, th, best_score)
                     return True
 
@@ -683,51 +796,59 @@ class MacroEngine:
         return False
 
     def _show_debug_overlay(self, x: int, y: int, w: int, h: int, score: float) -> None:
-        """Dessine un rectangle de debug autour de la zone detectee (GDI, 2 s).
-        Actif uniquement si self._debug_overlay est True.
-        Vert  = trouve (score >= 0.85),  Orange = presque,  Rouge = loin.
+        """Demande au thread overlay de dessiner un rectangle GDI autour de la zone.
+        Un seul thread persistent est reuse plutot que d'en creer un par appel.
+        Vert = trouve (>=0.85), Orange = proche (>=0.60), Rouge = loin.
         """
         if not self._debug_overlay:
             return
         if not WINDOWS or ctypes is None:
             return
         import threading
-        def _run():
-            try:
-                user32 = ctypes.windll.user32
-                gdi32  = ctypes.windll.gdi32
-                # Couleur en fonction du score (BGR pour GDI)
-                if score >= 0.85:
-                    bgr = 0x00CC00        # vert
-                elif score >= 0.60:
-                    bgr = 0x0099FF        # orange
-                else:
-                    bgr = 0x3C3CFF        # rouge
+        self._dbg_state = {
+            "x": x, "y": y, "w": w, "h": h, "score": score,
+            "until": time.time() + 2.0,
+        }
+        if self._dbg_thread is None or not self._dbg_thread.is_alive():
+            self._dbg_thread = threading.Thread(
+                target=self._run_dbg_thread, daemon=True)
+            self._dbg_thread.start()
+
+    def _run_dbg_thread(self) -> None:
+        """Thread unique de rendu GDI pour l'overlay de detection."""
+        try:
+            user32 = ctypes.windll.user32
+            gdi32  = ctypes.windll.gdi32
+            while True:
+                s = self._dbg_state
+                if s is None or time.time() > s["until"]:
+                    break
+                score = s["score"]
+                bgr   = (0x00CC00 if score >= 0.85
+                         else 0x0099FF if score >= 0.60
+                         else 0x3C3CFF)
                 label = f"Score: {score:.3f}"
-                end = time.time() + 2.0
-                while time.time() < end:
-                    dc = user32.GetDC(0)
-                    # Rectangle
-                    pen      = gdi32.CreatePen(0, 3, bgr)        # PS_SOLID
-                    old_pen  = gdi32.SelectObject(dc, pen)
-                    null_br  = gdi32.GetStockObject(5)           # NULL_BRUSH
-                    old_br   = gdi32.SelectObject(dc, null_br)
-                    gdi32.Rectangle(dc, x, y, x + w, y + h)
-                    gdi32.SelectObject(dc, old_pen)
-                    gdi32.SelectObject(dc, old_br)
-                    gdi32.DeleteObject(pen)
-                    # Label score
-                    gdi32.SetBkMode(dc, 1)           # TRANSPARENT
-                    gdi32.SetTextColor(dc, bgr)
-                    user32.DrawTextW(dc, label, len(label),
-                                     ctypes.byref(ctypes.wintypes.RECT(x, max(0, y - 20),
-                                                                        x + 160, y)),
-                                     0x0025)          # DT_LEFT|DT_SINGLELINE|DT_VCENTER
-                    user32.ReleaseDC(0, dc)
-                    time.sleep(0.05)
-            except Exception:
-                pass
-        threading.Thread(target=_run, daemon=True).start()
+                dc    = user32.GetDC(0)
+                pen   = gdi32.CreatePen(0, 3, bgr)
+                old_p = gdi32.SelectObject(dc, pen)
+                null_b = gdi32.GetStockObject(5)
+                old_b  = gdi32.SelectObject(dc, null_b)
+                gdi32.Rectangle(dc, s["x"], s["y"],
+                                s["x"] + s["w"], s["y"] + s["h"])
+                gdi32.SelectObject(dc, old_p)
+                gdi32.SelectObject(dc, old_b)
+                gdi32.DeleteObject(pen)
+                gdi32.SetBkMode(dc, 1)
+                gdi32.SetTextColor(dc, bgr)
+                user32.DrawTextW(dc, label, len(label),
+                                 ctypes.byref(ctypes.wintypes.RECT(
+                                     s["x"], max(0, s["y"] - 20),
+                                     s["x"] + 160, s["y"])),
+                                 0x0025)
+                user32.ReleaseDC(0, dc)
+                time.sleep(0.05)
+        except Exception:
+            pass
 
     def _check_pixel_color(self, p: dict) -> bool:
         if not PIL_AVAILABLE or not ImageGrab:

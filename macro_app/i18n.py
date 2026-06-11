@@ -11,9 +11,9 @@ import json
 import os
 import ctypes
 
-_LOCALES_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "locales")
-)
+from .paths import get_bundled_dir
+
+_LOCALES_DIR = get_bundled_dir("locales")
 _LANGS_FILE = os.path.join(_LOCALES_DIR, "langs.json")
 
 _translations: dict = {}

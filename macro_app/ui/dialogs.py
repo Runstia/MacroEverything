@@ -12,7 +12,7 @@ import io
 import base64
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import filedialog
 
 from ..constants import COLORS, FONTS, NODE_TYPES, NODE_ICONS
 from ..utils import PIL_AVAILABLE, Image, ImageTk, ImageGrab
@@ -42,10 +42,10 @@ def _get_virtual_screen():
 class NodeEditorDialog(tk.Toplevel):
     def __init__(self, parent, node, app):
         super().__init__(parent)
+        self.withdraw()
         self.node   = node
         self.app    = app
         self.result = None
-        ntype = NODE_TYPES.get(node["type"], {})
         self.title(f"{_t('node.edit_prefix')}  -  {node_label(node['type'])}")
         self.configure(bg=COLORS["bg"])
         self.resizable(False, False)
@@ -55,11 +55,12 @@ class NodeEditorDialog(tk.Toplevel):
         self._center()
 
     def _center(self):
+        self.deiconify()
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(
-            f"+{(self.winfo_screenwidth() - w) // 2}"
-            f"+{(self.winfo_screenheight() - h) // 2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build_ui(self):
         t = self.node["type"]
@@ -186,16 +187,19 @@ class NodeEditorDialog(tk.Toplevel):
             v = tk.StringVar(value=p.get("target", ""))
             self.vars["target"] = v
             if labels:
-                cb = ttk.Combobox(frame, textvariable=v, values=labels,
-                                  font=FONTS["normal"], width=28, state="readonly")
-                cb.pack(fill="x", pady=(0, 8))
-                tk.Button(frame, text=_t("btn.refresh"),
-                          bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                          font=FONTS["small"], relief="flat", cursor="hand2",
-                          padx=6, pady=3,
-                          command=lambda: cb.configure(
-                              values=_collect_labels(self.app.current_macro))
-                          ).pack(anchor="w", pady=(0, 4))
+                _lbl_var = [labels[0]] if labels else [""]
+                om = tk.OptionMenu(frame, v, *labels)
+                om.config(bg=COLORS["bg3"], fg=COLORS["text"],
+                          activebackground=COLORS["accent"],
+                          activeforeground=COLORS["bg"],
+                          font=FONTS["normal"], relief="flat", cursor="hand2",
+                          highlightthickness=0, borderwidth=0, anchor="w")
+                om["menu"].config(bg=COLORS["bg3"], fg=COLORS["text"],
+                                  activebackground=COLORS["accent"],
+                                  activeforeground=COLORS["bg"],
+                                  font=FONTS["normal"], relief="flat",
+                                  borderwidth=0)
+                om.pack(fill="x", pady=(0, 8))
             else:
                 tk.Entry(frame, textvariable=v,
                          bg=COLORS["bg3"], fg=COLORS["text"],
@@ -266,6 +270,140 @@ class NodeEditorDialog(tk.Toplevel):
 
         elif t == "record_replay":
             self._build_record_replay_ui(frame, p)
+
+        elif t == "action_click_image":
+            tk.Label(frame,
+                     text=_t("node.action_click_image_desc"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"], justify="left",
+                     wraplength=340).pack(anchor="w", pady=(0, 8))
+            self._build_screen_capture_ui(frame, p)
+            tk.Frame(frame, bg=COLORS["bg3"], height=1).pack(fill="x", pady=(8, 4))
+            tk.Label(frame, text=_t("field.click_pos_mode"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"]).pack(anchor="w")
+            _mode_var = tk.StringVar(value=p.get("click_pos_mode", "center"))
+            self.vars["click_pos_mode"] = _mode_var
+            _last_rb = None
+            for _mk, _lk in [("center", "field.click_mode_center"),
+                              ("offset", "field.click_mode_offset")]:
+                _rb = tk.Radiobutton(frame, text=_t(_lk),
+                                     variable=_mode_var, value=_mk,
+                                     bg=COLORS["bg"], fg=COLORS["text"],
+                                     selectcolor=COLORS["bg3"],
+                                     activebackground=COLORS["bg"],
+                                     font=FONTS["normal"],
+                                     wraplength=340, justify="left")
+                _rb.pack(anchor="w", pady=2)
+                _last_rb = _rb
+            _off_f = tk.Frame(frame, bg=COLORS["bg"])
+            self._field(_off_f, "click_offset_x",
+                        _t("field.click_offset_x"), p.get("click_offset_x", 0))
+            self._field(_off_f, "click_offset_y",
+                        _t("field.click_offset_y"), p.get("click_offset_y", 0))
+
+            def _tog_off(*_, _v=_mode_var, _f=_off_f, _anc=_last_rb):
+                if _v.get() == "offset":
+                    _f.pack(fill="x", after=_anc)
+                else:
+                    _f.pack_forget()
+
+            _mode_var.trace_add("write", _tog_off)
+            _tog_off()
+            tk.Frame(frame, bg=COLORS["bg3"], height=1).pack(fill="x", pady=(8, 6))
+            self._choice(frame, "button", _t("field.button"),
+                         p.get("button", "left"), ["left", "right", "middle"])
+            self._field(frame, "count", _t("field.click_count"), p.get("count", 1))
+
+        elif t == "action_window_layout":
+            tk.Label(frame,
+                     text=_t("node.action_window_layout_desc"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"], justify="left",
+                     wraplength=340).pack(anchor="w", pady=(0, 8))
+            self._field(frame, "title", _t("field.window_title"), p.get("title", ""))
+            _v_partial = tk.BooleanVar(value=bool(p.get("partial", True)))
+            self.vars["partial"] = _v_partial
+            tk.Checkbutton(frame, text=_t("field.partial_match"),
+                           variable=_v_partial,
+                           bg=COLORS["bg"], fg=COLORS["text"],
+                           selectcolor=COLORS["bg3"],
+                           activebackground=COLORS["bg"],
+                           font=FONTS["normal"]).pack(anchor="w", pady=(0, 10))
+            tk.Frame(frame, bg=COLORS["bg3"], height=1).pack(fill="x", pady=(0, 6))
+            tk.Label(frame, text=_t("field.window_preset"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"]).pack(anchor="w")
+            _preset_var = tk.StringVar(value=p.get("preset", "center"))
+            self.vars["preset"] = _preset_var
+            _PRESETS = ["center", "top_left", "top_right",
+                        "bottom_left", "bottom_right", "custom"]
+            _pf = tk.Frame(frame, bg=COLORS["bg"])
+            _pf.pack(fill="x", pady=(2, 0))
+            _pf.columnconfigure(0, weight=1)
+            _pf.columnconfigure(1, weight=1)
+            for _i, _pk in enumerate(_PRESETS):
+                tk.Radiobutton(_pf, text=_t(f"preset.{_pk}"),
+                               variable=_preset_var, value=_pk,
+                               bg=COLORS["bg"], fg=COLORS["text"],
+                               selectcolor=COLORS["bg3"],
+                               activebackground=COLORS["bg"],
+                               font=FONTS["normal"]).grid(
+                                   row=_i // 2, column=_i % 2,
+                                   sticky="w", padx=4, pady=2)
+            _cust_f = tk.Frame(frame, bg=COLORS["bg"])
+            self._field(_cust_f, "x", "X (px)", p.get("x", 0))
+            self._field(_cust_f, "y", "Y (px)", p.get("y", 0))
+
+            def _tog_cust(*_, _v=_preset_var, _f=_cust_f, _anc=_pf):
+                if _v.get() == "custom":
+                    _f.pack(fill="x", after=_anc)
+                else:
+                    _f.pack_forget()
+
+            _preset_var.trace_add("write", _tog_cust)
+            _tog_cust()
+            tk.Frame(frame, bg=COLORS["bg3"], height=1).pack(fill="x", pady=(6, 6))
+            tk.Label(frame, text=_t("field.win_size"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"]).pack(anchor="w")
+            _sz_f = tk.Frame(frame, bg=COLORS["bg"])
+            _sz_f.pack(fill="x")
+            _sz_f.columnconfigure(0, weight=1)
+            _sz_f.columnconfigure(1, weight=1)
+            _wf = tk.Frame(_sz_f, bg=COLORS["bg"])
+            _wf.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+            self._field(_wf, "width",  _t("field.win_width"),  p.get("width",  0))
+            _hf = tk.Frame(_sz_f, bg=COLORS["bg"])
+            _hf.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+            self._field(_hf, "height", _t("field.win_height"), p.get("height", 0))
+            _v_scale = tk.BooleanVar(value=bool(p.get("scale_with_res", False)))
+            self.vars["scale_with_res"] = _v_scale
+            tk.Checkbutton(frame, text=_t("field.scale_with_res"),
+                           variable=_v_scale,
+                           bg=COLORS["bg"], fg=COLORS["text"],
+                           selectcolor=COLORS["bg3"],
+                           activebackground=COLORS["bg"],
+                           font=FONTS["normal"],
+                           wraplength=340, justify="left").pack(anchor="w", pady=(4, 0))
+
+        elif t == "condition_switch":
+            var_names = _collect_var_names(self.app.current_macro["nodes"])
+            self._combo_field(frame, "variable", _t("field.switch_var"),
+                              p.get("variable", ""), var_names)
+            self._sw_cases = list(p.get("cases", [0]))
+            tk.Label(frame, text=_t("field.switch_cases"),
+                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                     font=FONTS["small"]).pack(anchor="w")
+            self._sw_cases_frame = tk.Frame(frame, bg=COLORS["bg3"])
+            self._sw_cases_frame.pack(fill="x", pady=(2, 8))
+            self._sw_case_vars = []
+            self._refresh_sw_cases()
+            tk.Button(frame, text=_t("field.add_case"),
+                      bg=COLORS["accent"], fg=COLORS["bg"],
+                      font=FONTS["normal"], relief="flat", cursor="hand2",
+                      padx=10, pady=5,
+                      command=self._add_sw_case).pack(anchor="w", pady=(0, 8))
 
         elif t == "condition_group":
             self._cg_logic_var  = tk.StringVar(value=p.get("logic", "AND"))
@@ -636,16 +774,35 @@ class NodeEditorDialog(tk.Toplevel):
                  relief="flat", width=30).pack(fill="x", pady=(0, 8))
 
     def _combo_field(self, parent, key, label, default="", options=None):
-        """Champ editable avec liste deroulante de suggestions."""
+        """Champ éditable avec liste de suggestions (OptionMenu sombre)."""
         tk.Label(parent, text=label,
                  bg=COLORS["bg"], fg=COLORS["text_dim"],
                  font=FONTS["small"]).pack(anchor="w")
         v = tk.StringVar(value=str(default))
         self.vars[key] = v
-        cb = ttk.Combobox(parent, textvariable=v,
-                          values=options or [],
-                          font=FONTS["normal"], width=28)
-        cb.pack(fill="x", pady=(0, 8))
+        # Ligne: entrée libre + menu déroulant
+        row = tk.Frame(parent, bg=COLORS["bg"])
+        row.pack(fill="x", pady=(0, 8))
+        e = tk.Entry(row, textvariable=v,
+                     bg=COLORS["bg3"], fg=COLORS["text"],
+                     font=FONTS["normal"], insertbackground=COLORS["text"],
+                     relief="flat")
+        e.pack(side="left", fill="x", expand=True)
+        opts = options or []
+        if opts:
+            om = tk.OptionMenu(row, v, *opts)
+            om.config(bg=COLORS["bg3"], fg=COLORS["text"],
+                      activebackground=COLORS["accent"],
+                      activeforeground=COLORS["bg"],
+                      font=FONTS["small"], relief="flat", cursor="hand2",
+                      highlightthickness=0, borderwidth=0,
+                      padx=4, pady=2)
+            om["menu"].config(bg=COLORS["bg3"], fg=COLORS["text"],
+                              activebackground=COLORS["accent"],
+                              activeforeground=COLORS["bg"],
+                              font=FONTS["normal"], relief="flat",
+                              borderwidth=0)
+            om.pack(side="left", padx=(4, 0))
 
     def _choice(self, parent, key, label, default, options):
         tk.Label(parent, text=label,
@@ -732,6 +889,33 @@ class NodeEditorDialog(tk.Toplevel):
                   padx=8, pady=6,
                   command=self._clear).pack(side="left")
 
+        # ── Zone de recherche ──────────────────────────
+        reg_hdr = tk.Frame(frame, bg=COLORS["bg"])
+        reg_hdr.pack(fill="x", pady=(0, 2))
+        tk.Label(reg_hdr, text=_t("region.label"),
+                 bg=COLORS["bg"], fg=COLORS["text_dim"],
+                 font=FONTS["small"]).pack(side="left")
+        self._region_lbl = tk.Label(reg_hdr, text="",
+                                     bg=COLORS["bg"], fg=COLORS["text_dim"],
+                                     font=FONTS["small"])
+        self._region_lbl.pack(side="left", padx=(8, 0))
+        self._refresh_region_display()
+
+        reg_btns = tk.Frame(frame, bg=COLORS["bg"])
+        reg_btns.pack(fill="x", pady=(0, 10))
+        tk.Button(reg_btns, text=_t("region.define"),
+                  bg=COLORS["surface"], fg=COLORS["text"],
+                  font=FONTS["small"], relief="flat", cursor="hand2",
+                  padx=8, pady=4,
+                  command=self._define_search_region
+                  ).pack(side="left", padx=(0, 6))
+        tk.Button(reg_btns, text=_t("region.clear"),
+                  bg=COLORS["surface"], fg=COLORS["text_dim"],
+                  font=FONTS["small"], relief="flat", cursor="hand2",
+                  padx=8, pady=4,
+                  command=self._clear_search_region
+                  ).pack(side="left")
+
         self._field(frame, "threshold",
                     _t("capture.threshold"),
                     p.get("threshold", 0.85))
@@ -768,6 +952,32 @@ class NodeEditorDialog(tk.Toplevel):
     def _clear(self):
         self._template_b64 = ""
         self._preview_lbl.configure(image="", text=_t("capture.none"))
+
+    def _define_search_region(self):
+        self.withdraw()
+        def _on_region(coords):
+            self.deiconify()
+            if coords:
+                self._region = coords
+            self._refresh_region_display()
+        RegionSelectWindow(self, _on_region)
+
+    def _clear_search_region(self):
+        self._region = None
+        self._refresh_region_display()
+
+    def _refresh_region_display(self):
+        region = getattr(self, "_region", None)
+        if region:
+            x1, y1, x2, y2 = (int(region[0]), int(region[1]),
+                               int(region[2]), int(region[3]))
+            w, h = x2 - x1, y2 - y1
+            txt = f"{x1},{y1}  →  {w}×{h} px"
+            fg  = COLORS["teal"]
+        else:
+            txt = _t("region.none")
+            fg  = COLORS["text_dim"]
+        self._region_lbl.configure(text=txt, fg=fg)
 
     # ── Helpers condition_group ───────────────
     def _refresh_cg_list(self):
@@ -830,8 +1040,75 @@ class NodeEditorDialog(tk.Toplevel):
         self._cg_conditions.pop(idx)
         self._refresh_cg_list()
 
+    # ── Helpers condition_switch ──────────────
+    def _refresh_sw_cases(self):
+        for w in self._sw_cases_frame.winfo_children():
+            w.destroy()
+        self._sw_case_vars = []
+        palette = [COLORS["accent"], COLORS["teal"], COLORS["orange"],
+                   COLORS["accent2"], COLORS["yellow"], COLORS["green"]]
+        if not self._sw_cases:
+            tk.Label(self._sw_cases_frame,
+                     text=_t("sw.empty"),
+                     bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                     font=FONTS["small"]).pack(padx=8, pady=6)
+            return
+        for i, val in enumerate(self._sw_cases):
+            col = palette[i % len(palette)]
+            row = tk.Frame(self._sw_cases_frame, bg=COLORS["bg3"])
+            row.pack(fill="x", padx=4, pady=2)
+            tk.Label(row, text="=", bg=COLORS["bg3"], fg=col,
+                     font=FONTS["small"]).pack(side="left", padx=(6, 4))
+            v = tk.StringVar(value=str(val))
+            self._sw_case_vars.append(v)
+            tk.Entry(row, textvariable=v,
+                     bg=COLORS["bg3"], fg=COLORS["text"],
+                     font=FONTS["normal"], insertbackground=COLORS["text"],
+                     relief="flat", width=14).pack(side="left", fill="x", expand=True, padx=(0, 4))
+            tk.Button(row, text="✕",
+                      bg=COLORS["bg3"], fg=COLORS["red"],
+                      font=FONTS["small"], relief="flat", cursor="hand2", padx=4,
+                      command=lambda i=i: self._remove_sw_case(i)
+                      ).pack(side="right", padx=2)
+
+    def _add_sw_case(self):
+        self._sw_cases = [v.get() for v in self._sw_case_vars]
+        self._sw_cases.append(0)
+        self._refresh_sw_cases()
+
+    def _remove_sw_case(self, idx):
+        self._sw_cases = [v.get() for v in self._sw_case_vars]
+        self._sw_cases.pop(idx)
+        self._refresh_sw_cases()
+
     def _ok(self):
         t = self.node["type"]
+
+        # Traitement special condition_switch
+        if t == "condition_switch":
+            cases = []
+            for v in self._sw_case_vars:
+                raw = v.get().strip()
+                try:
+                    cases.append(int(raw) if "." not in raw else float(raw))
+                except (ValueError, TypeError):
+                    cases.append(raw)
+            p = {
+                "variable": self.vars.get("variable", tk.StringVar()).get(),
+                "cases":    cases,
+            }
+            children = list(self.node.get("children", []))
+            target_n = len(cases) + 1
+            while len(children) < target_n:
+                children.append([])
+            del children[target_n:]
+            self.app._push_history()
+            self.node["params"]   = p
+            self.node["children"] = children
+            self.result = p
+            self.destroy()
+            self.app.tree_canvas.refresh()
+            return
 
         # Traitement special condition_group (structure non standard)
         if t == "condition_group":
@@ -876,7 +1153,8 @@ class NodeEditorDialog(tk.Toplevel):
                 p[key] = var.get()
 
         # delta est entier (scroll) sauf pour var_add ou il est un flottant
-        int_fields = ("x", "y", "r", "g", "b", "count", "tolerance", "ms", "max_iter")
+        int_fields = ("x", "y", "r", "g", "b", "count", "tolerance", "ms", "max_iter",
+                      "width", "height", "click_offset_x", "click_offset_y")
         if t not in ("var_add",):
             int_fields = int_fields + ("delta",)
         for ik in int_fields:
@@ -898,7 +1176,7 @@ class NodeEditorDialog(tk.Toplevel):
         if t == "stop_return" and "value" in p:
             p["value"] = str(p["value"])  # ne pas convertir en nombre
 
-        if t in ("condition_screen", "loop_while"):
+        if t in ("condition_screen", "loop_while", "action_click_image"):
             p["template_b64"] = self._template_b64
             p["region"]       = self._region
 
@@ -1036,11 +1314,34 @@ class RegionCaptureWindow(tk.Toplevel):
 
 
 # ─────────────────────────────────────────────
+#  SELECTION DE ZONE (coords uniquement)
+# ─────────────────────────────────────────────
+class RegionSelectWindow(RegionCaptureWindow):
+    """Comme RegionCaptureWindow, mais retourne [x1,y1,x2,y2] (coordonnées absolues)."""
+
+    def _on_release(self, event):
+        if not self._start:
+            return
+        x0, y0 = self._start
+        self.destroy()
+        x = min(x0, event.x)
+        y = min(y0, event.y)
+        w = abs(event.x - x0)
+        h = abs(event.y - y0)
+        if w > 4 and h > 4:
+            self.callback([x + self._vx, y + self._vy,
+                           x + w + self._vx, y + h + self._vy])
+            return
+        self.callback(None)
+
+
+# ─────────────────────────────────────────────
 #  DIALOGUE D'AJOUT DE NOEUD
 # ─────────────────────────────────────────────
 class AddNodeDialog(tk.Toplevel):
     def __init__(self, parent, app, target_list, insert_after=None):
         super().__init__(parent)
+        self.withdraw()
         self.app          = app
         self.target_list  = target_list
         self.insert_after = insert_after
@@ -1053,44 +1354,90 @@ class AddNodeDialog(tk.Toplevel):
         self._center()
 
     def _center(self):
+        self.deiconify()
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(
-            f"+{(self.winfo_screenwidth() - w) // 2}"
-            f"+{(self.winfo_screenheight() - h) // 2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build(self):
-        frame = tk.Frame(self, bg=COLORS["bg"], padx=20, pady=16)
-        frame.pack(fill="both", expand=True)
-        tk.Label(frame, text=_t("node.add_choose"),
-                 bg=COLORS["bg"], fg=COLORS["accent"],
-                 font=FONTS["heading"]).pack(anchor="w", pady=(0, 12))
+        from ..constants import NODE_CAT_ORDER
 
+        # ── En-tête fixe ────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=COLORS["bg"], padx=20, pady=14)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=_t("node.add_choose"),
+                 bg=COLORS["bg"], fg=COLORS["accent"],
+                 font=FONTS["heading"]).pack(anchor="w")
+
+        # ── Zone scrollable ──────────────────────────────────────────────
+        outer = tk.Frame(self, bg=COLORS["bg"])
+        outer.pack(fill="both", expand=True)
+        cvs = tk.Canvas(outer, bg=COLORS["bg"], highlightthickness=0,
+                        width=840, height=540)
+        vsb = tk.Scrollbar(outer, orient="vertical", command=cvs.yview)
+        cvs.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        cvs.pack(side="left", fill="both", expand=True)
+
+        inner  = tk.Frame(cvs, bg=COLORS["bg"])
+        win_id = cvs.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: cvs.configure(scrollregion=cvs.bbox("all")))
+        cvs.bind("<Configure>",
+                 lambda e: cvs.itemconfigure(win_id, width=e.width))
+        cvs.bind("<MouseWheel>",
+                 lambda e: cvs.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        # ── Boutons par catégorie ────────────────────────────────────────
         cats = {}
         for key, info in NODE_TYPES.items():
             cats.setdefault(info["cat"], []).append((key, info))
 
-        for cat, items in cats.items():
-            tk.Label(frame, text=cat_label(cat).upper(),
+        COLS = 5
+        PAD  = 10
+
+        for cat in NODE_CAT_ORDER:
+            if cat not in cats:
+                continue
+            items = cats[cat]
+
+            # En-tête de catégorie avec séparateur
+            cat_hdr = tk.Frame(inner, bg=COLORS["bg"], padx=PAD)
+            cat_hdr.pack(fill="x", pady=(12, 3))
+            tk.Label(cat_hdr, text=cat_label(cat).upper(),
                      bg=COLORS["bg"], fg=COLORS["text_dim"],
-                     font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(8, 2))
-            row = tk.Frame(frame, bg=COLORS["bg"])
-            row.pack(fill="x", pady=2)
-            for key, info in items:
+                     font=("Segoe UI", 8, "bold")).pack(side="left")
+            tk.Frame(cat_hdr, bg=COLORS["border"], height=1).pack(
+                side="left", fill="x", expand=True, padx=(8, 0), pady=6)
+
+            # Grille uniforme (3 colonnes de même largeur)
+            grid_f = tk.Frame(inner, bg=COLORS["bg"], padx=PAD)
+            grid_f.pack(fill="x", pady=(0, 2))
+            for c in range(COLS):
+                grid_f.columnconfigure(c, weight=1)
+
+            for idx, (key, info) in enumerate(items):
+                row_idx, col = divmod(idx, COLS)
                 icon = NODE_ICONS.get(key, "")
                 lbl  = f"{icon}  {node_label(key)}" if icon else node_label(key)
-                tk.Button(row, text=lbl,
+                tk.Button(grid_f, text=lbl,
                           bg=info["color"], fg=COLORS["text"],
-                          font=FONTS["normal"], relief="flat", cursor="hand2",
-                          padx=10, pady=8, wraplength=130, justify="left",
+                          font=FONTS["small"], relief="flat", cursor="hand2",
+                          anchor="w", padx=8, pady=9,
+                          wraplength=130, justify="left",
                           command=lambda k=key: self._add(k)
-                          ).pack(side="left", padx=4, pady=2)
+                          ).grid(row=row_idx, column=col, padx=3, pady=3, sticky="nsew")
 
-        tk.Button(frame, text=_t("btn.cancel"),
+        # ── Bouton Annuler fixe en bas ───────────────────────────────────
+        bf = tk.Frame(self, bg=COLORS["bg"], padx=20, pady=12)
+        bf.pack(fill="x")
+        tk.Button(bf, text=_t("btn.cancel"),
                   bg=COLORS["surface"], fg=COLORS["text"],
                   font=FONTS["normal"], relief="flat", cursor="hand2",
                   padx=16, pady=8,
-                  command=self.destroy).pack(pady=(12, 0))
+                  command=self.destroy).pack(side="right")
 
     def _add(self, node_type):
         node = new_node(node_type)
@@ -1129,9 +1476,9 @@ class _SubCondDialog(tk.Toplevel):
         self._build()
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(
-            f"+{(self.winfo_screenwidth() - w) // 2}"
-            f"+{(self.winfo_screenheight() - h) // 2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build(self):
         f = tk.Frame(self, bg=COLORS["bg"], padx=20, pady=16)
@@ -1202,9 +1549,24 @@ class _SubCondDialog(tk.Toplevel):
                  font=FONTS["small"]).pack(anchor="w")
         v = tk.StringVar(value=str(default))
         self._svars[key] = v
-        ttk.Combobox(self._fields_f, textvariable=v,
-                     values=options, font=FONTS["normal"],
-                     width=24).pack(fill="x", pady=(0, 6))
+        row = tk.Frame(self._fields_f, bg=COLORS["bg"])
+        row.pack(fill="x", pady=(0, 6))
+        tk.Entry(row, textvariable=v,
+                 bg=COLORS["bg3"], fg=COLORS["text"],
+                 font=FONTS["normal"], insertbackground=COLORS["text"],
+                 relief="flat").pack(side="left", fill="x", expand=True)
+        if options:
+            om = tk.OptionMenu(row, v, *options)
+            om.config(bg=COLORS["bg3"], fg=COLORS["text"],
+                      activebackground=COLORS["accent"],
+                      activeforeground=COLORS["bg"],
+                      font=FONTS["small"], relief="flat", cursor="hand2",
+                      highlightthickness=0, borderwidth=0, padx=4, pady=2)
+            om["menu"].config(bg=COLORS["bg3"], fg=COLORS["text"],
+                              activebackground=COLORS["accent"],
+                              activeforeground=COLORS["bg"],
+                              font=FONTS["normal"], relief="flat", borderwidth=0)
+            om.pack(side="left", padx=(4, 0))
 
     def _add_radio(self, key, label, default, options):
         tk.Label(self._fields_f, text=label,
@@ -1253,9 +1615,9 @@ class LanguageDialog(tk.Toplevel):
         self._build()
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(
-            f"+{(self.winfo_screenwidth() - w) // 2}"
-            f"+{(self.winfo_screenheight() - h) // 2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build(self):
         from .. import i18n

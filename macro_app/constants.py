@@ -4,6 +4,8 @@ Toutes les constantes visuelles et de configuration :
 couleurs, polices, types de noeuds, icones, VK_MAP.
 """
 
+APP_VERSION = "1.3.0"
+
 # ─────────────────────────────────────────────
 #  PALETTE DE COULEURS (theme Catppuccin Mocha)
 # ─────────────────────────────────────────────
@@ -13,7 +15,7 @@ COLORS = {
     "bg3":          "#313244",
     "surface":      "#45475a",
     "text":         "#cdd6f4",
-    "text_dim":     "#585b70",
+    "text_dim":     "#6c7086",
     "accent":       "#89b4fa",
     "accent2":      "#cba6f7",
     "green":        "#a6e3a1",
@@ -21,86 +23,109 @@ COLORS = {
     "yellow":       "#f9e2af",
     "orange":       "#fab387",
     "teal":         "#94e2d5",
-    "border":       "#313244",
-    # Couleurs de fond des noeuds
-    "node_action":  "#1e3a5f",
+    "border":       "#45475a",
+    "shadow":       "#11111b",
+    # Couleurs de fond des noeuds par categorie
+    "node_mouse":   "#1a3050",
+    "node_kbd":     "#1e2d4e",
+    "node_sys":     "#2a1f50",
     "node_cond":    "#3a1e5f",
     "node_screen":  "#1e5f3a",
-    "node_wait":    "#5f3a1e",
-    "node_loop":    "#5f5f1e",
+    "node_wait":    "#4a3010",
+    "node_loop":    "#3a3a10",
     "node_stop":    "#5f1e1e",
     "node_var":     "#1a3d4f",
-    "node_return":   "#5f1e4f",
+    "node_return":  "#5f1e4f",
+    # Alias pour compat
+    "node_action":  "#1a3050",
 }
 
 # ─────────────────────────────────────────────
 #  POLICES
 # ─────────────────────────────────────────────
 FONTS = {
-    "title":   ("Segoe UI", 16, "bold"),
-    "heading": ("Segoe UI", 12, "bold"),
+    "title":   ("Segoe UI", 15, "bold"),
+    "heading": ("Segoe UI", 11, "bold"),
     "normal":  ("Segoe UI", 10),
     "small":   ("Segoe UI", 9),
+    "tiny":    ("Segoe UI", 8),
     "mono":    ("Consolas", 10),
 }
 
 # ─────────────────────────────────────────────
 #  TYPES DE NOEUDS
-#  Chaque entree : label affiché, couleur de fond, categorie
+#  Chaque entree : label (fallback anglais), couleur, categorie
+#  Les labels traduits sont dans locales/{lang}.json (node.{key}.label)
 # ─────────────────────────────────────────────
 NODE_TYPES = {
-    "action_click":     {"label": "Clic souris",        "color": COLORS["node_action"],  "cat": "Action"},
-    "action_key":       {"label": "Touche clavier",     "color": COLORS["node_action"],  "cat": "Action"},
-    "action_type":      {"label": "Saisir du texte",    "color": COLORS["node_action"],  "cat": "Action"},
-    "action_move":      {"label": "Deplacer souris",    "color": COLORS["node_action"],  "cat": "Action"},
-    "action_scroll":    {"label": "Scroll souris",      "color": COLORS["node_action"],  "cat": "Action"},
-    "action_wait":      {"label": "Attendre",           "color": COLORS["node_wait"],    "cat": "Action"},
-    "action_run":       {"label": "Lancer programme",   "color": COLORS["node_action"],  "cat": "Action"},
-    "action_focus":     {"label": "Focus fenetre",      "color": COLORS["node_action"],  "cat": "Action"},
-    "condition_screen": {"label": "Si ecran contient",  "color": COLORS["node_screen"],  "cat": "Condition"},
-    "condition_pixel":  {"label": "Si pixel = couleur", "color": COLORS["node_screen"],  "cat": "Condition"},
-    "loop_count":       {"label": "Repeter N fois",     "color": COLORS["node_loop"],    "cat": "Boucle"},
-    "loop_while":       {"label": "Tant que",           "color": COLORS["node_loop"],    "cat": "Boucle"},
-    "stop":             {"label": "Arreter la macro",   "color": COLORS["node_stop"],    "cat": "Controle"},
-    "label":            {"label": "Etiquette",          "color": COLORS["surface"],      "cat": "Controle"},
-    "goto":             {"label": "Aller a etiquette",  "color": COLORS["surface"],      "cat": "Controle"},
-    "var_set":          {"label": "Definir variable",   "color": COLORS["node_var"],     "cat": "Variable"},
-    "var_add":          {"label": "Modifier variable",  "color": COLORS["node_var"],     "cat": "Variable"},
-    "condition_var":    {"label": "Si variable",        "color": COLORS["node_cond"],    "cat": "Condition"},
-    "loop_while_var":   {"label": "Tant que variable",  "color": COLORS["node_loop"],    "cat": "Boucle"},
-    "condition_group":  {"label": "Si AND / OR",        "color": COLORS["node_cond"],    "cat": "Condition"},
-    "call_macro":       {"label": "Appeler une macro",  "color": COLORS["node_action"],  "cat": "Controle"},
-    "stop_return":       {"label": "Retourner valeur",   "color": COLORS["node_return"],  "cat": "Controle"},
-    "record_replay":     {"label": "Enregistrer/Rejouer","color": COLORS["node_action"],  "cat": "Action"},
+    # ── Souris ────────────────────────────────
+    "action_click":        {"label": "Mouse click",        "color": COLORS["node_mouse"],  "cat": "Mouse"},
+    "action_move":         {"label": "Move mouse",         "color": COLORS["node_mouse"],  "cat": "Mouse"},
+    "action_scroll":       {"label": "Mouse scroll",       "color": COLORS["node_mouse"],  "cat": "Mouse"},
+    "action_click_image":  {"label": "Click on image",     "color": COLORS["node_screen"], "cat": "Mouse"},
+    # ── Clavier ───────────────────────────────
+    "action_key":          {"label": "Keyboard key",       "color": COLORS["node_kbd"],    "cat": "Keyboard"},
+    "action_type":         {"label": "Type text",          "color": COLORS["node_kbd"],    "cat": "Keyboard"},
+    # ── Systeme ───────────────────────────────
+    "action_wait":         {"label": "Wait",               "color": COLORS["node_wait"],   "cat": "System"},
+    "action_run":          {"label": "Run program",        "color": COLORS["node_sys"],    "cat": "System"},
+    "action_focus":        {"label": "Focus window",       "color": COLORS["node_sys"],    "cat": "System"},
+    "action_window_layout":{"label": "Window layout",      "color": COLORS["node_sys"],    "cat": "System"},
+    "record_replay":       {"label": "Record & Replay",    "color": COLORS["node_sys"],    "cat": "System"},
+    # ── Conditions ────────────────────────────
+    "condition_screen":    {"label": "If screen contains", "color": COLORS["node_screen"], "cat": "Condition"},
+    "condition_pixel":     {"label": "If pixel = color",   "color": COLORS["node_screen"], "cat": "Condition"},
+    "condition_var":       {"label": "If variable",        "color": COLORS["node_cond"],   "cat": "Condition"},
+    "condition_group":     {"label": "If AND / OR",        "color": COLORS["node_cond"],   "cat": "Condition"},
+    "condition_switch":    {"label": "Switch variable",    "color": COLORS["node_cond"],   "cat": "Condition"},
+    # ── Boucles ───────────────────────────────
+    "loop_count":          {"label": "Repeat N times",     "color": COLORS["node_loop"],   "cat": "Loop"},
+    "loop_while":          {"label": "While screen",       "color": COLORS["node_loop"],   "cat": "Loop"},
+    "loop_while_var":      {"label": "While variable",     "color": COLORS["node_loop"],   "cat": "Loop"},
+    # ── Variables ─────────────────────────────
+    "var_set":             {"label": "Set variable",       "color": COLORS["node_var"],    "cat": "Variable"},
+    "var_add":             {"label": "Modify variable",    "color": COLORS["node_var"],    "cat": "Variable"},
+    # ── Flux de controle ──────────────────────
+    "label":               {"label": "Label",              "color": COLORS["surface"],     "cat": "Flow"},
+    "goto":                {"label": "Go to label",        "color": COLORS["surface"],     "cat": "Flow"},
+    "call_macro":          {"label": "Call macro",         "color": COLORS["node_sys"],    "cat": "Flow"},
+    "stop":                {"label": "Stop macro",         "color": COLORS["node_stop"],   "cat": "Flow"},
+    "stop_return":         {"label": "Return value",       "color": COLORS["node_return"], "cat": "Flow"},
 }
+
+# Ordre d'affichage des categories dans AddNodeDialog
+NODE_CAT_ORDER = ["Mouse", "Keyboard", "System", "Condition", "Loop", "Variable", "Flow"]
 
 # ─────────────────────────────────────────────
 #  ICONES UNICODE PAR TYPE DE NOEUD
 # ─────────────────────────────────────────────
 NODE_ICONS = {
-    "action_click":     "\U0001f5b1",
-    "action_key":       "\u2328",
-    "action_type":      "\U0001f4dd",
-    "action_move":      "\u2192",
-    "action_scroll":    "\u21f3",
-    "action_wait":      "\u23f1",
-    "action_run":       "\u25b6",
-    "action_focus":     "\U0001f3af",
-    "condition_screen": "\U0001f4f8",
-    "condition_pixel":  "\U0001f3a8",
-    "loop_count":       "\U0001f501",
-    "loop_while":       "\U0001f504",
-    "stop":             "\u23f9",
-    "label":            "\U0001f3f7",
-    "goto":             "\u21a9",
-    "var_set":          "\U0001f4be",
-    "var_add":          "\u2295",
-    "condition_var":    "\U0001f522",
-    "loop_while_var":   "\u221e",
-    "condition_group":  "\u22c7",
-    "call_macro":       "\u21b3",
-    "stop_return":       "\u21b5",
-    "record_replay":     "\u23fa",
+    "action_click":        "\U0001f5b1",
+    "action_key":          "⌨",
+    "action_type":         "\U0001f4dd",
+    "action_move":         "→",
+    "action_scroll":       "⇳",
+    "action_wait":         "⏱",
+    "action_run":          "▶",
+    "action_focus":        "\U0001f3af",
+    "action_click_image":  "\U0001f50d",
+    "action_window_layout":"❖",
+    "condition_screen":    "\U0001f4f8",
+    "condition_pixel":     "\U0001f3a8",
+    "loop_count":          "\U0001f501",
+    "loop_while":          "\U0001f504",
+    "stop":                "⏹",
+    "label":               "\U0001f3f7",
+    "goto":                "↩",
+    "var_set":             "\U0001f4be",
+    "var_add":             "⊕",
+    "condition_var":       "\U0001f522",
+    "loop_while_var":      "∞",
+    "condition_group":     "⋇",
+    "condition_switch":    "⊟",
+    "call_macro":          "↳",
+    "stop_return":         "↵",
+    "record_replay":       "⏺",
 }
 
 # ─────────────────────────────────────────────

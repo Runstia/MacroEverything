@@ -27,13 +27,22 @@ def new_node(node_type: str, params: dict = None) -> dict:
     # Noeuds a une seule branche (corps de boucle)
     elif node_type in ("loop_count", "loop_while_var"):
         node["children"] = [[]]
+    # Switch : 1 branche par case + 1 branche default
+    elif node_type == "condition_switch":
+        node["children"] = [[], []]   # 1 case (valeur 0) + default
+        node["params"]   = {"variable": "", "cases": [0]}
     return node
 
 
 def new_macro() -> dict:
     """Cree une macro vide avec valeurs par defaut."""
+    try:
+        from .i18n import t
+        name = t("macro.default_name")
+    except Exception:
+        name = "New macro"
     return {
-        "name":  "Nouvelle macro",
+        "name":  name,
         "loop":  False,
         "nodes": [],
         "res_w": 0,

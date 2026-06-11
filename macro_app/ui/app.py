@@ -1,15 +1,6 @@
 """
 macro_app/ui/app.py
 Fenetre principale de l'application MacroEverything.
-
-Classes :
-  MacroEverythingApp — fenetre tk.Tk racine, orchestre tous les composants
-  SettingsDialog     — dialogue parametres (debug overlay, etc.)
-
-Modele de donnees (multi-groupes) :
-  self._groups = [{"path": str|None, "macros": [...], "dirty": bool}, ...]
-  self.current_macro  = la macro actuellement affichee dans l'editeur
-  self._current_group = le groupe auquel current_macro appartient
 """
 
 import json
@@ -19,7 +10,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
-from ..constants import COLORS, FONTS
+from ..constants import COLORS, FONTS, APP_VERSION
 from ..utils import _play_cue
 from ..models import new_macro, _remap_ids
 from ..engine import MacroEngine
@@ -33,6 +24,14 @@ from .dialogs import NodeEditorDialog, AddNodeDialog, LanguageDialog
 from .panels import PropertiesPanel
 
 
+def _bind_hover(btn, normal, hover):
+    def _enter(e):
+        if str(btn["state"]) != "disabled":
+            btn.configure(bg=hover)
+    btn.bind("<Enter>", _enter)
+    btn.bind("<Leave>", lambda e: btn.configure(bg=normal))
+
+
 class MacroEverythingApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -41,13 +40,11 @@ class MacroEverythingApp(tk.Tk):
         self.minsize(900, 600)
         self.configure(bg=COLORS["bg"])
 
-        # ── Multi-groupes ──────────────────────
-        # Chaque groupe = un fichier .macros
         self._groups: list        = []
         self._current_group: dict = None
         self.current_macro: dict  = None
-        # _lb_index[i] = (groupe, macro) ou None si separateur
         self._lb_index: list      = []
+        self._list_items: list    = []
 
         self._engine        = None
         self._engine_thread = None
@@ -67,9 +64,7 @@ class MacroEverythingApp(tk.Tk):
         self._refresh_hotkey_labels()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # ─────────────────────────────────────────
-    #  INIT
-    # ─────────────────────────────────────────
+    # ── INIT ────────────────────────────────────────────────
     def _init_i18n(self):
         data = load_settings()
         i18n.init(data.get("language", None))
@@ -99,17 +94,11 @@ class MacroEverythingApp(tk.Tk):
                         troughcolor=COLORS["bg2"],
                         bordercolor=COLORS["bg2"],
                         arrowcolor=COLORS["text_dim"])
-        style.configure("TCombobox",
-                        fieldbackground=COLORS["bg3"],
-                        background=COLORS["bg3"],
-                        foreground=COLORS["text"],
-                        selectbackground=COLORS["accent"])
 
-    # ─────────────────────────────────────────
-    #  CONSTRUCTION UI
-    # ─────────────────────────────────────────
+    # ── UI CONSTRUCTION ──────────────────────────────────────
     def _build_ui(self):
         self._build_topbar()
+        self._build_bottombar()          # packer avant le frame principal
         main = tk.Frame(self, bg=COLORS["bg"])
         main.pack(fill="both", expand=True)
         self._build_macro_list(main)
@@ -117,8 +106,7 @@ class MacroEverythingApp(tk.Tk):
         self._build_canvas_area(main)
         tk.Frame(main, bg=COLORS["border"], width=1).pack(side="left", fill="y")
         self.props_panel = PropertiesPanel(main, self)
-        self.props_panel.pack(side="left", fill="y")
-        self._build_bottombar()
+        self.props_panel.pack(side="left", fill="both")
         self.bind_all("<Control-z>", lambda e: self._undo())
         self.bind_all("<Control-y>", lambda e: self._redo())
 
@@ -129,7 +117,13 @@ class MacroEverythingApp(tk.Tk):
 
         tk.Label(bar, text="MacroEverything",
                  bg=COLORS["bg3"], fg=COLORS["accent"],
-                 font=FONTS["title"]).pack(side="left", padx=16)
+                 font=FONTS["title"]).pack(side="left", padx=(16, 4))
+
+        # ── Groupe fichier (encadré) ──────────────────────────
+        file_frame = tk.Frame(bar, bg=COLORS["bg2"],
+                              highlightthickness=1,
+                              highlightbackground=COLORS["surface"])
+        file_frame.pack(side="left", padx=(6, 0), pady=9)
 
         for label, cmd in [
             (t("menu.new"),      self._new_group),
@@ -137,61 +131,85 @@ class MacroEverythingApp(tk.Tk):
             (t("menu.save"),     self._save_current_group),
             (t("menu.save_all"), self._save_all_groups),
         ]:
-            tk.Button(bar, text=label,
-                      bg=COLORS["bg3"], fg=COLORS["text"],
-                      font=FONTS["normal"], relief="flat", cursor="hand2",
-                      padx=12, pady=8, activebackground=COLORS["surface"],
-                      command=cmd).pack(side="left", padx=2)
+            btn = tk.Button(file_frame, text=label,
+                            bg=COLORS["bg2"], fg=COLORS["text"],
+                            font=FONTS["normal"], relief="flat", cursor="hand2",
+                            padx=11, pady=4, command=cmd)
+            btn.pack(side="left")
+            _bind_hover(btn, COLORS["bg2"], COLORS["bg3"])
 
         tk.Frame(bar, bg=COLORS["bg3"]).pack(side="left", fill="x", expand=True)
 
-        tk.Button(bar, text=t("menu.language"),
-                  bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                  font=FONTS["small"], relief="flat", cursor="hand2",
-                  padx=10, pady=8,
-                  command=self._open_language_settings).pack(side="right", padx=4)
-
-        tk.Button(bar, text=t("menu.settings"),
-                  bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                  font=FONTS["small"], relief="flat", cursor="hand2",
-                  padx=10, pady=8,
-                  command=self._open_settings).pack(side="right", padx=4)
-
-        tk.Button(bar, text=t("menu.hotkeys"),
-                  bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                  font=FONTS["small"], relief="flat", cursor="hand2",
-                  padx=10, pady=8,
-                  command=self._open_hotkey_settings).pack(side="right", padx=4)
-
-        tk.Label(bar, text="v1.0",
+        # ── Version ──────────────────────────────────────────
+        tk.Label(bar, text=f"v{APP_VERSION}",
                  bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                 font=FONTS["small"]).pack(side="right", padx=12)
+                 font=FONTS["small"]).pack(side="right", padx=(0, 14))
+
+        # ── Groupe paramètres (encadré) ───────────────────────
+        cfg_frame = tk.Frame(bar, bg=COLORS["bg2"],
+                             highlightthickness=1,
+                             highlightbackground=COLORS["surface"])
+        cfg_frame.pack(side="right", padx=(0, 6), pady=9)
+
+        for label, cmd in [
+            (t("menu.language"), self._open_language_settings),
+            (t("menu.settings"), self._open_settings),
+            (t("menu.hotkeys"),  self._open_hotkey_settings),
+        ]:
+            btn = tk.Button(cfg_frame, text=label,
+                            bg=COLORS["bg2"], fg=COLORS["text_dim"],
+                            font=FONTS["small"], relief="flat", cursor="hand2",
+                            padx=9, pady=4, command=cmd)
+            btn.pack(side="right")
+            _bind_hover(btn, COLORS["bg2"], COLORS["bg3"])
 
     def _build_macro_list(self, parent):
-        frame = tk.Frame(parent, bg=COLORS["bg2"], width=210)
+        frame = tk.Frame(parent, bg=COLORS["bg2"], width=222)
         frame.pack(side="left", fill="y")
         frame.pack_propagate(False)
 
-        hdr = tk.Frame(frame, bg=COLORS["bg3"], padx=10, pady=8)
+        hdr = tk.Frame(frame, bg=COLORS["bg3"], height=42)
         hdr.pack(fill="x")
+        hdr.pack_propagate(False)
         tk.Label(hdr, text=t("sidebar.my_macros"),
                  bg=COLORS["bg3"], fg=COLORS["text"],
-                 font=FONTS["heading"]).pack(side="left")
-        tk.Button(hdr, text="+",
-                  bg=COLORS["accent"], fg=COLORS["bg"],
-                  font=FONTS["heading"], relief="flat", cursor="hand2",
-                  width=2, command=self._new_macro_in_current_group).pack(side="right")
+                 font=FONTS["heading"]).pack(side="left", padx=12)
+        add_btn = tk.Button(hdr, text="+",
+                            bg=COLORS["accent"], fg=COLORS["bg"],
+                            font=FONTS["heading"], relief="flat", cursor="hand2",
+                            width=2, command=self._new_macro_in_current_group)
+        add_btn.pack(side="right", padx=8)
+        _bind_hover(add_btn, COLORS["accent"], "#74c7ec")
 
-        self._macro_listbox = tk.Listbox(
-            frame, bg=COLORS["bg2"], fg=COLORS["text"],
-            font=FONTS["normal"], relief="flat",
-            selectbackground=COLORS["accent"],
-            selectforeground=COLORS["bg"],
-            activestyle="none", bd=0, highlightthickness=0)
-        self._macro_listbox.pack(fill="both", expand=True, padx=4, pady=4)
-        self._macro_listbox.bind("<<ListboxSelect>>", self._on_listbox_select)
-        self._macro_listbox.bind("<Double-Button-1>", self._rename_macro)
-        self._macro_listbox.bind("<Button-3>",        self._macro_context_menu)
+        tk.Frame(frame, bg=COLORS["border"], height=1).pack(fill="x")
+
+        sc_wrap = tk.Frame(frame, bg=COLORS["bg2"])
+        sc_wrap.pack(fill="both", expand=True)
+
+        self._list_canvas = tk.Canvas(sc_wrap, bg=COLORS["bg2"],
+                                      highlightthickness=0, bd=0)
+        sc_sb = ttk.Scrollbar(sc_wrap, orient="vertical",
+                               command=self._list_canvas.yview)
+        self._list_canvas.configure(yscrollcommand=sc_sb.set)
+        sc_sb.pack(side="right", fill="y")
+        self._list_canvas.pack(side="left", fill="both", expand=True)
+
+        self._list_inner = tk.Frame(self._list_canvas, bg=COLORS["bg2"])
+        self._list_win_id = self._list_canvas.create_window(
+            (0, 0), window=self._list_inner, anchor="nw")
+
+        self._list_inner.bind(
+            "<Configure>",
+            lambda e: self._list_canvas.configure(
+                scrollregion=self._list_canvas.bbox("all")))
+        self._list_canvas.bind(
+            "<Configure>",
+            lambda e: self._list_canvas.itemconfig(
+                self._list_win_id, width=e.width))
+        self._list_canvas.bind(
+            "<MouseWheel>",
+            lambda e: self._list_canvas.yview_scroll(
+                -1 * (e.delta // 120), "units"))
 
     def _build_canvas_area(self, parent):
         frame = tk.Frame(parent, bg=COLORS["bg2"])
@@ -201,24 +219,28 @@ class MacroEverythingApp(tk.Tk):
         toolbar.pack(fill="x")
         toolbar.pack_propagate(False)
 
-        tk.Button(toolbar, text=t("toolbar.add_node"),
-                  bg=COLORS["accent"], fg=COLORS["bg"],
-                  font=FONTS["normal"], relief="flat", cursor="hand2",
-                  padx=12, pady=6,
-                  command=self.add_node_dialog).pack(side="left", padx=8, pady=4)
+        add_btn = tk.Button(toolbar, text=t("toolbar.add_node"),
+                            bg=COLORS["accent"], fg=COLORS["bg"],
+                            font=FONTS["normal"], relief="flat", cursor="hand2",
+                            padx=12, pady=6, command=self.add_node_dialog)
+        add_btn.pack(side="left", padx=8, pady=4)
+        _bind_hover(add_btn, COLORS["accent"], "#74c7ec")
 
         self._undo_btn = tk.Button(toolbar, text=t("toolbar.undo"),
-                                    bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                                    font=FONTS["small"], relief="flat",
-                                    cursor="hand2", padx=8, pady=6,
-                                    state="disabled", command=self._undo)
+                                   bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                                   font=FONTS["small"], relief="flat",
+                                   cursor="hand2", padx=8, pady=6,
+                                   state="disabled", command=self._undo)
         self._undo_btn.pack(side="left", padx=(4, 0), pady=4)
+        _bind_hover(self._undo_btn, COLORS["bg3"], COLORS["surface"])
+
         self._redo_btn = tk.Button(toolbar, text=t("toolbar.redo"),
-                                    bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                                    font=FONTS["small"], relief="flat",
-                                    cursor="hand2", padx=8, pady=6,
-                                    state="disabled", command=self._redo)
+                                   bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                                   font=FONTS["small"], relief="flat",
+                                   cursor="hand2", padx=8, pady=6,
+                                   state="disabled", command=self._redo)
         self._redo_btn.pack(side="left", padx=(2, 0), pady=4)
+        _bind_hover(self._redo_btn, COLORS["bg3"], COLORS["surface"])
 
         self._macro_name_var = tk.StringVar()
         ne = tk.Entry(toolbar, textvariable=self._macro_name_var,
@@ -263,6 +285,8 @@ class MacroEverythingApp(tk.Tk):
         res_h_e.bind("<FocusOut>", self._on_res_change)
         res_h_e.bind("<Return>",   self._on_res_change)
 
+        tk.Frame(frame, bg=COLORS["border"], height=1).pack(fill="x")
+
         canvas_frame = tk.Frame(frame, bg=COLORS["bg2"])
         canvas_frame.pack(fill="both", expand=True)
 
@@ -280,7 +304,8 @@ class MacroEverythingApp(tk.Tk):
         hbar.configure(command=self.tree_canvas.xview)
         self.tree_canvas.bind(
             "<MouseWheel>",
-            lambda e: self.tree_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+            lambda e: self.tree_canvas.yview_scroll(
+                -1 * (e.delta // 120), "units"))
 
     def _build_bottombar(self):
         bar = tk.Frame(self, bg=COLORS["bg3"], height=56)
@@ -292,38 +317,38 @@ class MacroEverythingApp(tk.Tk):
             bg=COLORS["green"], fg=COLORS["bg"],
             font=("Segoe UI", 12, "bold"), relief="flat",
             cursor="hand2", padx=20, pady=8,
+            activebackground="#c3f0bc", activeforeground=COLORS["bg"],
             command=self._run_macro)
         self._run_btn.pack(side="left", padx=12, pady=8)
+        _bind_hover(self._run_btn, COLORS["green"], "#c3f0bc")
 
         self._pause_btn = tk.Button(
             bar, text=t("btn.pause"),
-            bg=COLORS["yellow"], fg=COLORS["bg"],
+            bg=COLORS["bg3"], fg=COLORS["text_dim"],
             font=FONTS["normal"], relief="flat",
             cursor="hand2", padx=12, pady=8,
+            activebackground=COLORS["surface"], activeforeground=COLORS["text"],
             state="disabled", command=self._pause_macro)
         self._pause_btn.pack(side="left", padx=4, pady=8)
 
         self._stop_btn = tk.Button(
             bar, text=t("btn.stop"),
-            bg=COLORS["red"], fg=COLORS["bg"],
+            bg=COLORS["bg3"], fg=COLORS["text_dim"],
             font=FONTS["normal"], relief="flat",
             cursor="hand2", padx=12, pady=8,
+            activebackground=COLORS["surface"], activeforeground=COLORS["text"],
             state="disabled", command=self._stop_macro)
         self._stop_btn.pack(side="left", padx=4, pady=8)
 
         tk.Frame(bar, bg=COLORS["bg3"]).pack(side="left", fill="x", expand=True)
 
-        self._status_var = tk.StringVar(value="Pret")
-        tk.Label(bar, textvariable=self._status_var,
-                 bg=COLORS["bg3"], fg=COLORS["text_dim"],
-                 font=FONTS["small"]).pack(side="right", padx=16)
+        self._status_var = tk.StringVar(value=t("status.ready"))
+        self._status_label = tk.Label(bar, textvariable=self._status_var,
+                                      bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                                      font=FONTS["small"])
+        self._status_label.pack(side="right", padx=16)
 
-        self._progress = ttk.Progressbar(bar, mode="indeterminate", length=100)
-        self._progress.pack(side="right", padx=8, pady=16)
-
-    # ─────────────────────────────────────────
-    #  PARAMETRES / HOTKEYS / LANGUE
-    # ─────────────────────────────────────────
+    # ── SETTINGS / HOTKEYS / LANG ────────────────────────────
     def _open_hotkey_settings(self):
         HotkeySettingsDialog(self, self.hotkey_manager,
                              on_apply=self._on_hotkeys_applied)
@@ -358,11 +383,8 @@ class MacroEverythingApp(tk.Tk):
         if not self._engine:
             self._status_var.set(t("status.ready_full", r=r, s=s, p=p))
 
-    # ─────────────────────────────────────────
-    #  CHARGEMENT INITIAL
-    # ─────────────────────────────────────────
+    # ── CHARGEMENT INITIAL ───────────────────────────────────
     def _load_all_files(self):
-        """Charge tous les .macros du dossier macros/ au demarrage."""
         macros_dir = get_macros_dir()
         try:
             files = sorted(
@@ -388,7 +410,6 @@ class MacroEverythingApp(tk.Tk):
         self._refresh_macro_list()
 
     def _load_file_as_group(self, path, silent=False):
-        """Charge un fichier .macros et l'ajoute comme nouveau groupe."""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -404,55 +425,157 @@ class MacroEverythingApp(tk.Tk):
                 messagebox.showerror(t("warn.error_open_title"),
                                      t("warn.error_open_msg", e=e))
 
-    # ─────────────────────────────────────────
-    #  LISTBOX : construction et navigation
-    # ─────────────────────────────────────────
+    # ── SIDEBAR LIST ─────────────────────────────────────────
     def _refresh_macro_list(self):
-        """Reconstruit la listbox avec separateurs entre les groupes."""
-        lb = self._macro_listbox
-        lb.delete(0, "end")
-        self._lb_index = []
+        for w in self._list_inner.winfo_children():
+            w.destroy()
+        self._list_items = []
+        self._lb_index   = []
 
         for group in self._groups:
             fname = (os.path.basename(group["path"])
                      if group["path"] else t("sidebar.unsaved_group"))
-            dirty_mark = " ●" if group["dirty"] else ""
-            sep_label  = f"── {fname}{dirty_mark}"
-            lb.insert("end", sep_label)
-            lb.itemconfig("end",
-                          fg=COLORS["accent"],
-                          selectbackground=COLORS["bg2"],
-                          selectforeground=COLORS["accent"])
+            dirty_mark = "  ●" if group["dirty"] else ""
+
+            ghdr = tk.Frame(self._list_inner, bg=COLORS["bg"],
+                            padx=10, pady=6, cursor="hand2")
+            ghdr.pack(fill="x")
+            lbl_ghdr = tk.Label(ghdr, text=f"{fname}{dirty_mark}",
+                                bg=COLORS["bg"], fg=COLORS["accent"],
+                                font=("Segoe UI", 8, "bold"), anchor="w")
+            lbl_ghdr.pack(side="left", fill="x", expand=True)
             self._lb_index.append(None)
 
+            def _make_ghdr_hover(w, lbl):
+                def _enter(e):
+                    w.configure(bg=COLORS["bg3"])
+                    lbl.configure(bg=COLORS["bg3"])
+                def _leave(e):
+                    w.configure(bg=COLORS["bg"])
+                    lbl.configure(bg=COLORS["bg"])
+                return _enter, _leave
+
+            _ent, _lev = _make_ghdr_hover(ghdr, lbl_ghdr)
+            ghdr.bind("<Enter>",    _ent)
+            ghdr.bind("<Leave>",    _lev)
+            lbl_ghdr.bind("<Enter>", _ent)
+            lbl_ghdr.bind("<Leave>", _lev)
+            ghdr.bind("<Button-3>",
+                      lambda e, g=group: self._group_context_menu(e, g))
+            lbl_ghdr.bind("<Button-3>",
+                          lambda e, g=group: self._group_context_menu(e, g))
+
             for macro in group["macros"]:
-                lb.insert("end", f"   {macro['name']}")
+                item = self._make_list_item(group, macro)
                 self._lb_index.append((group, macro))
+                self._list_items.append(item)
 
-        # Rétablir la sélection
-        if self.current_macro:
-            for i, e in enumerate(self._lb_index):
-                if e and e[1] is self.current_macro:
-                    lb.selection_set(i)
-                    lb.see(i)
-                    break
+        self._list_canvas.update_idletasks()
+        self._list_canvas.configure(
+            scrollregion=self._list_canvas.bbox("all"))
 
-    def _on_listbox_select(self, event=None):
-        sel = self._macro_listbox.curselection()
-        if not sel:
-            return
-        entry = self._lb_index[sel[0]]
-        if entry is None:
-            # Clic sur un separateur → refuser, remettre la selection courante
-            self._macro_listbox.selection_clear(0, "end")
-            if self.current_macro:
-                for i, e in enumerate(self._lb_index):
-                    if e and e[1] is self.current_macro:
-                        self._macro_listbox.selection_set(i)
-                        break
-            return
-        group, macro = entry
-        self._select_macro(macro, group)
+    def _make_list_item(self, group, macro):
+        BG_N  = COLORS["bg2"]
+        BG_H  = COLORS["bg3"]
+        BG_S  = "#252540"
+        ACC_S = COLORS["accent"]
+
+        selected = (self.current_macro is macro)
+        bg_now   = BG_S if selected else BG_N
+        ac_now   = ACC_S if selected else BG_N
+
+        row = tk.Frame(self._list_inner, bg=bg_now, cursor="hand2")
+        row.pack(fill="x")
+
+        accent = tk.Frame(row, bg=ac_now, width=3)
+        accent.pack(side="left", fill="y")
+
+        lbl = tk.Label(row, text=macro["name"],
+                       bg=bg_now, fg=COLORS["text"],
+                       font=FONTS["normal"], anchor="w", padx=10, pady=7)
+        lbl.pack(side="left", fill="x", expand=True)
+
+        def on_enter(e, r=row, a=accent, lb=lbl, m=macro):
+            if self.current_macro is not m:
+                r.configure(bg=BG_H); a.configure(bg=BG_H); lb.configure(bg=BG_H)
+
+        def on_leave(e, r=row, a=accent, lb=lbl, m=macro):
+            if self.current_macro is not m:
+                r.configure(bg=BG_N); a.configure(bg=BG_N); lb.configure(bg=BG_N)
+
+        def on_click(e, g=group, m=macro):
+            self._select_macro(m, g)
+
+        def on_dbl(e, g=group, m=macro):
+            self._rename_macro_item(m, g)
+
+        def on_rclick(e, g=group, m=macro):
+            self._macro_item_context(e, m, g)
+
+        def on_wheel(e):
+            self._list_canvas.yview_scroll(-1 * (e.delta // 120), "units")
+
+        for w in (row, lbl):
+            w.bind("<Enter>",           on_enter)
+            w.bind("<Leave>",           on_leave)
+            w.bind("<Button-1>",        on_click)
+            w.bind("<Double-Button-1>", on_dbl)
+            w.bind("<Button-3>",        on_rclick)
+            w.bind("<MouseWheel>",      on_wheel)
+        accent.bind("<MouseWheel>", on_wheel)
+
+        return (row, accent, lbl, group, macro)
+
+    def _update_list_selection(self):
+        BG_N  = COLORS["bg2"]
+        BG_S  = "#252540"
+        ACC_S = COLORS["accent"]
+        for row, accent, lbl, group, macro in self._list_items:
+            sel    = (self.current_macro is macro)
+            bg_now = BG_S if sel else BG_N
+            ac_now = ACC_S if sel else BG_N
+            try:
+                row.configure(bg=bg_now)
+                accent.configure(bg=ac_now)
+                lbl.configure(bg=bg_now)
+            except tk.TclError:
+                pass
+
+    def _rename_macro_item(self, macro, group):
+        name = simpledialog.askstring(
+            t("macro.rename_title"), t("macro.rename_prompt"),
+            initialvalue=macro["name"], parent=self)
+        if name:
+            macro["name"] = name
+            self._refresh_macro_list()
+            self._macro_name_var.set(name)
+            self._mark_group_dirty(group)
+
+    def _macro_item_context(self, event, macro, group):
+        menu = tk.Menu(self, tearoff=0,
+                       bg=COLORS["bg3"], fg=COLORS["text"],
+                       activebackground=COLORS["accent"],
+                       activeforeground=COLORS["bg"])
+        menu.add_command(label=t("macro.rename"),
+                         command=lambda: self._rename_macro_item(macro, group))
+        menu.add_command(label=t("macro.duplicate"),
+                         command=lambda: self._duplicate_macro(macro, group))
+        menu.add_separator()
+        menu.add_command(label=t("macro.delete"),
+                         command=lambda: self._delete_macro(macro, group))
+        menu.post(event.x_root, event.y_root)
+
+    def _group_context_menu(self, event, group):
+        menu = tk.Menu(self, tearoff=0,
+                       bg=COLORS["bg3"], fg=COLORS["text"],
+                       activebackground=COLORS["accent"],
+                       activeforeground=COLORS["bg"])
+        menu.add_command(label=t("group.rename"),
+                         command=lambda: self._rename_group(group))
+        menu.add_separator()
+        menu.add_command(label=t("group.delete"),
+                         command=lambda: self._delete_group(group))
+        menu.post(event.x_root, event.y_root)
 
     def _select_macro(self, macro, group):
         self.current_macro  = macro
@@ -465,15 +588,18 @@ class MacroEverythingApp(tk.Tk):
         self._res_h_var.set(str(rh) if rh else "")
         self.tree_canvas.refresh()
         self.props_panel._build_empty()
+        self._update_list_selection()
 
-    # ─────────────────────────────────────────
-    #  GESTION DES GROUPES (fichiers)
-    # ─────────────────────────────────────────
+    # ── GROUPS ───────────────────────────────────────────────
     def _new_group(self, silent=False):
-        """Cree un nouveau groupe (fichier) avec une macro vide."""
         m = new_macro()
-        m["res_w"] = self.winfo_screenwidth()
-        m["res_h"] = self.winfo_screenheight()
+        try:
+            import ctypes as _c
+            m["res_w"] = _c.windll.user32.GetSystemMetrics(78)
+            m["res_h"] = _c.windll.user32.GetSystemMetrics(79)
+        except Exception:
+            m["res_w"] = self.winfo_screenwidth()
+            m["res_h"] = self.winfo_screenheight()
         group = {"path": None, "macros": [m], "dirty": True}
         self._groups.append(group)
         if not silent:
@@ -482,13 +608,11 @@ class MacroEverythingApp(tk.Tk):
             self._update_title()
 
     def _save_current_group(self):
-        """Sauvegarde uniquement le groupe de la macro selectionnee."""
         if not self._current_group:
             return
         self._write_group(self._current_group)
 
     def _save_all_groups(self):
-        """Sauvegarde tous les groupes modifies."""
         for group in self._groups:
             if group["dirty"]:
                 self._write_group(group)
@@ -554,22 +678,24 @@ class MacroEverythingApp(tk.Tk):
     def _update_title(self):
         base = "MacroEverything"
         if self._current_group and self._current_group.get("path"):
-            base += f"  \u2014  {os.path.basename(self._current_group['path'])}"
+            base += f"  —  {os.path.basename(self._current_group['path'])}"
         if any(g["dirty"] for g in self._groups):
-            base += "  \u25cf"
+            base += "  ●"
         self.title(base)
 
-    # ─────────────────────────────────────────
-    #  GESTION DES MACROS (dans un groupe)
-    # ─────────────────────────────────────────
+    # ── MACROS ───────────────────────────────────────────────
     def _new_macro_in_current_group(self):
-        """Ajoute une macro au groupe actuellement selectionne."""
         if not self._current_group:
             self._new_group()
             return
         m = new_macro()
-        m["res_w"] = self.winfo_screenwidth()
-        m["res_h"] = self.winfo_screenheight()
+        try:
+            import ctypes as _c
+            m["res_w"] = _c.windll.user32.GetSystemMetrics(78)
+            m["res_h"] = _c.windll.user32.GetSystemMetrics(79)
+        except Exception:
+            m["res_w"] = self.winfo_screenwidth()
+            m["res_h"] = self.winfo_screenheight()
         self._current_group["macros"].append(m)
         self._select_macro(m, self._current_group)
         self._refresh_macro_list()
@@ -577,7 +703,6 @@ class MacroEverythingApp(tk.Tk):
 
     @property
     def macros(self):
-        """Toutes les macros de tous les groupes, a plat (pour le moteur)."""
         result = []
         for g in self._groups:
             result.extend(g["macros"])
@@ -611,78 +736,7 @@ class MacroEverythingApp(tk.Tk):
             pass
         self._mark_group_dirty()
 
-    def _rename_macro(self, event=None):
-        sel = self._macro_listbox.curselection()
-        if not sel:
-            return
-        entry = self._lb_index[sel[0]]
-        if not entry:
-            return
-        group, macro = entry
-        name = simpledialog.askstring(t("macro.rename_title"), t("macro.rename_prompt"),
-                                      initialvalue=macro["name"], parent=self)
-        if name:
-            macro["name"] = name
-            self._refresh_macro_list()
-            self._macro_name_var.set(name)
-            self._mark_group_dirty(group)
-
-    def _macro_context_menu(self, event):
-        sel = self._macro_listbox.curselection()
-        # Forcer la sélection sur la ligne cliquée (le clic droit ne sélectionne pas)
-        idx = self._macro_listbox.nearest(event.y)
-        if idx < 0:
-            return
-        self._macro_listbox.selection_clear(0, "end")
-        self._macro_listbox.selection_set(idx)
-        entry = self._lb_index[idx]
-
-        menu = tk.Menu(self, tearoff=0,
-                       bg=COLORS["bg3"], fg=COLORS["text"],
-                       activebackground=COLORS["accent"],
-                       activeforeground=COLORS["bg"])
-
-        if entry is None:
-            # ── Clic sur un séparateur = menu groupe ──
-            group = self._group_at_lb_index(idx)
-            if group is None:
-                return
-            menu.add_command(label=t("group.rename"),
-                             command=lambda: self._rename_group(group))
-            menu.add_separator()
-            menu.add_command(label=t("group.delete"),
-                             command=lambda: self._delete_group(group))
-        else:
-            # ── Clic sur une macro = menu macro ──
-            group, macro = entry
-            menu.add_command(label=t("macro.rename"),
-                             command=self._rename_macro)
-            menu.add_command(label=t("macro.duplicate"),
-                             command=lambda: self._duplicate_macro(macro, group))
-            menu.add_separator()
-            menu.add_command(label=t("macro.delete"),
-                             command=lambda: self._delete_macro(macro, group))
-
-        menu.post(event.x_root, event.y_root)
-
-    def _group_at_lb_index(self, lb_idx: int):
-        """Retourne le groupe associe au separateur a lb_idx."""
-        # Le separateur est suivi des macros du groupe
-        # Cherchons en avant la premiere macro dont le groupe est identifie
-        for i in range(lb_idx + 1, len(self._lb_index)):
-            e = self._lb_index[i]
-            if e is None:
-                break   # prochain separateur
-            return e[0]
-        # Aucune macro en dessous — chercher en arrière
-        for i in range(lb_idx - 1, -1, -1):
-            e = self._lb_index[i]
-            if e is not None:
-                return e[0]
-        return None
-
     def _rename_group(self, group):
-        """Renomme un groupe : nouveau nom de fichier dans le dossier macros/."""
         old_path = group.get("path")
         old_name = os.path.splitext(os.path.basename(old_path))[0] if old_path else ""
         name = simpledialog.askstring(
@@ -706,7 +760,6 @@ class MacroEverythingApp(tk.Tk):
         self._update_title()
 
     def _delete_group(self, group):
-        """Supprime un groupe (et son fichier apres confirmation)."""
         fname = (os.path.basename(group["path"])
                  if group["path"] else t("sidebar.unsaved_group"))
         if not messagebox.askyesno(t("group.delete_title"),
@@ -755,9 +808,7 @@ class MacroEverythingApp(tk.Tk):
         self.tree_canvas.refresh()
         self._mark_group_dirty(group)
 
-    # ─────────────────────────────────────────
-    #  HISTORIQUE UNDO / REDO
-    # ─────────────────────────────────────────
+    # ── UNDO / REDO ──────────────────────────────────────────
     def _push_history(self):
         if not self._current_group:
             return
@@ -819,9 +870,7 @@ class MacroEverythingApp(tk.Tk):
             state="normal" if self._redo_stack else "disabled",
             fg=COLORS["text"] if self._redo_stack else COLORS["text_dim"])
 
-    # ─────────────────────────────────────────
-    #  GESTION DES NOEUDS
-    # ─────────────────────────────────────────
+    # ── NODES ────────────────────────────────────────────────
     def _find_parent_list(self, node_id, nodes=None):
         if nodes is None:
             nodes = self.current_macro["nodes"] if self.current_macro else []
@@ -913,9 +962,7 @@ class MacroEverythingApp(tk.Tk):
         except Exception:
             pass
 
-    # ─────────────────────────────────────────
-    #  EXECUTION
-    # ─────────────────────────────────────────
+    # ── EXECUTION ────────────────────────────────────────────
     def _run_macro(self):
         if not self.current_macro:
             return
@@ -926,10 +973,16 @@ class MacroEverythingApp(tk.Tk):
                   stop_key=self.hotkey_manager.hotkeys.get("stop", "F10") or "F10"))
             return
         self._run_btn.configure(state="disabled")
-        self._pause_btn.configure(state="normal")
-        self._stop_btn.configure(state="normal")
+        self._pause_btn.configure(state="normal",
+                                   bg=COLORS["yellow"], fg=COLORS["bg"],
+                                   activebackground="#fcefc8",
+                                   activeforeground=COLORS["bg"])
+        self._stop_btn.configure(state="normal",
+                                  bg=COLORS["red"], fg=COLORS["bg"],
+                                  activebackground="#fbc8d4",
+                                  activeforeground=COLORS["bg"])
         self._status_var.set(t("status.running"))
-        self._progress.start(10)
+        self._status_label.configure(fg=COLORS["green"])
         _play_cue("run")
         self._engine = MacroEngine(
             self.current_macro,
@@ -952,11 +1005,13 @@ class MacroEverythingApp(tk.Tk):
             self._engine.resume()
             self._pause_btn.configure(text=f"{t('btn.pause')}  [{p}]")
             self._status_var.set(t("status.running"))
+            self._status_label.configure(fg=COLORS["green"])
             _play_cue("run")
         else:
             self._engine.pause()
             self._pause_btn.configure(text=f"{t('btn.resume')}  [{p}]")
             self._status_var.set(t("status.paused"))
+            self._status_label.configure(fg=COLORS["yellow"])
             _play_cue("pause")
 
     def _stop_macro(self):
@@ -986,15 +1041,21 @@ class MacroEverythingApp(tk.Tk):
         p = hk.get("pause", "F11") or "F11"
         self._run_btn.configure(state="normal")
         self._pause_btn.configure(state="disabled",
-                                   text=f"{t('btn.pause')}  [{p}]")
-        self._stop_btn.configure(state="disabled")
+                                   text=f"{t('btn.pause')}  [{p}]",
+                                   bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                                   activebackground=COLORS["surface"],
+                                   activeforeground=COLORS["text"])
+        self._stop_btn.configure(state="disabled",
+                                  bg=COLORS["bg3"], fg=COLORS["text_dim"],
+                                  activebackground=COLORS["surface"],
+                                  activeforeground=COLORS["text"])
         self._status_var.set(t("status.ready_full", r=r, s=s, p=p))
-        self._progress.stop()
+        self._status_label.configure(fg=COLORS["text_dim"])
 
 
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────
 #  DIALOGUE PARAMETRES
-# ─────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────
 class SettingsDialog(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app)
@@ -1007,9 +1068,9 @@ class SettingsDialog(tk.Toplevel):
         self._build()
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(
-            f"+{(self.winfo_screenwidth()  - w) // 2}"
-            f"+{(self.winfo_screenheight() - h) // 2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build(self):
         pad = tk.Frame(self, bg=COLORS["bg"], padx=24, pady=20)
@@ -1028,7 +1089,7 @@ class SettingsDialog(tk.Toplevel):
                        text=t("settings.debug_overlay"),
                        variable=self._dbg_var,
                        bg=COLORS["bg"], fg=COLORS["text"],
-                       selectcolor=COLORS["accent"],
+                       selectcolor=COLORS["bg"],
                        activebackground=COLORS["bg"],
                        font=FONTS["normal"]).pack(anchor="w")
         tk.Label(pad, text=t("settings.debug_overlay_hint"),
@@ -1039,16 +1100,20 @@ class SettingsDialog(tk.Toplevel):
         tk.Frame(pad, bg=COLORS["bg3"], height=1).pack(fill="x", pady=(8, 12))
         row = tk.Frame(pad, bg=COLORS["bg"])
         row.pack(anchor="e")
-        tk.Button(row, text=t("btn.cancel"),
-                  bg=COLORS["surface"], fg=COLORS["text"],
-                  font=FONTS["normal"], relief="flat", cursor="hand2",
-                  padx=12, pady=6,
-                  command=self.destroy).pack(side="left", padx=(0, 8))
-        tk.Button(row, text=t("btn.ok"),
-                  bg=COLORS["accent"], fg=COLORS["bg"],
-                  font=FONTS["normal"], relief="flat", cursor="hand2",
-                  padx=12, pady=6,
-                  command=self._apply).pack(side="left")
+
+        cancel_btn = tk.Button(row, text=t("btn.cancel"),
+                               bg=COLORS["surface"], fg=COLORS["text"],
+                               font=FONTS["normal"], relief="flat", cursor="hand2",
+                               padx=12, pady=6, command=self.destroy)
+        cancel_btn.pack(side="left", padx=(0, 8))
+        _bind_hover(cancel_btn, COLORS["surface"], COLORS["bg3"])
+
+        ok_btn = tk.Button(row, text=t("btn.ok"),
+                           bg=COLORS["accent"], fg=COLORS["bg"],
+                           font=FONTS["normal"], relief="flat", cursor="hand2",
+                           padx=12, pady=6, command=self._apply)
+        ok_btn.pack(side="left")
+        _bind_hover(ok_btn, COLORS["accent"], "#74c7ec")
 
     def _apply(self):
         self.app._debug_overlay = bool(self._dbg_var.get())

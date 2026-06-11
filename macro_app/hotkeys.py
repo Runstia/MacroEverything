@@ -10,7 +10,6 @@ Classes :
 import time
 import threading
 import tkinter as tk
-from tkinter import ttk
 
 try:
     import ctypes
@@ -76,7 +75,9 @@ class HotkeySettingsDialog(tk.Toplevel):
     def _center(self):
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{(self.winfo_screenwidth()-w)//2}+{(self.winfo_screenheight()-h)//2}")
+        px = self.master.winfo_rootx() + self.master.winfo_width() // 2
+        py = self.master.winfo_rooty() + self.master.winfo_height() // 2
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
 
     def _build(self):
         f = tk.Frame(self, bg=COLORS["bg"], padx=24, pady=20)
@@ -106,9 +107,19 @@ class HotkeySettingsDialog(tk.Toplevel):
                      font=FONTS["normal"], width=22, anchor="w").pack(side="left")
             v = tk.StringVar(value=self.hm.hotkeys.get(action, _t("hotkeys.none")))
             self.vars[action] = v
-            ttk.Combobox(row, textvariable=v, values=options,
-                         state="readonly", width=10,
-                         font=FONTS["normal"]).pack(side="left", padx=8)
+            om = tk.OptionMenu(row, v, *options)
+            om.config(bg=COLORS["bg3"], fg=COLORS["text"],
+                      activebackground=COLORS["accent"],
+                      activeforeground=COLORS["bg"],
+                      font=FONTS["normal"], relief="flat", cursor="hand2",
+                      highlightthickness=0, borderwidth=0,
+                      indicatoron=True, width=8)
+            om["menu"].config(bg=COLORS["bg3"], fg=COLORS["text"],
+                              activebackground=COLORS["accent"],
+                              activeforeground=COLORS["bg"],
+                              font=FONTS["normal"], relief="flat",
+                              borderwidth=0)
+            om.pack(side="left", padx=8)
 
         bf = tk.Frame(f, bg=COLORS["bg"])
         bf.pack(fill="x", pady=(18, 0))

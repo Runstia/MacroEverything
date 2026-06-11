@@ -7,9 +7,9 @@ Toutes les preferences applicatives (hotkeys, options futures) transitent ici.
 import json
 import os
 
-_SETTINGS_FILE = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "settings.json")
-)
+from .paths import get_user_data_dir
+
+_SETTINGS_FILE = os.path.join(get_user_data_dir(), "settings.json")
 
 
 def load_settings() -> dict:
