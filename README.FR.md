@@ -97,7 +97,7 @@ La détection s'effectue en 3 passes, toutes les opérations lourdes sont exécu
 
 Si l'overlay de debug est activé (Paramètres), un rectangle coloré s'affiche autour du meilleur résultat après chaque vérification : vert = trouvé, orange = proche, rouge = non trouvé.
 
-# User Data
+### User Data
 Tout est sauvegardé localement dans '%localappdata%/RunFaster/MacroEverything'
 
 ### Dépendances
@@ -134,3 +134,6 @@ MacroEverything/
         ├── panels.py          ← Panneau de propriétés avec aperçus
         └── tree_canvas.py     ← Rendu de l'arbre de nœuds
 ```
+# Crédits
+
+NEKOCHONNE - icone pour l'éxecutable

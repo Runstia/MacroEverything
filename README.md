@@ -97,7 +97,7 @@ Detection runs in 3 passes, all heavy operations are C-level PIL (no Python pixe
 
 If the debug overlay is enabled (Settings), a coloured rectangle is drawn around the best match after each check: green = found, orange = close, red = not found.
 
-# User Data
+### User Data
 Everything is saved localy in '%localappdata%/RunFaster/MacroEverything' 
 
 ### Dependencies
@@ -134,3 +134,7 @@ MacroEverything/
         ├── panels.py          ← Properties panel with previews
         └── tree_canvas.py     ← Node tree renderer
 ```
+
+# Credits
+
+NEKOCHONNE - icon for the executable
