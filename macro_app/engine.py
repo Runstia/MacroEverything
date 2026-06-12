@@ -255,6 +255,14 @@ class MacroEngine:
             val = str(p.get("value", "False")) == "True"
             raise _ReturnSignal(val)
 
+        elif t == "var_set":
+            name = p.get("name", "").strip()
+            if name:
+                try:
+                    self._vars[name] = float(p.get("value", 0))
+                except (ValueError, TypeError):
+                    self._vars[name] = 0.0
+
         elif t == "var_add":
             name = p.get("name", "").strip()
             if name:
