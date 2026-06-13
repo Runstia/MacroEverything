@@ -1,4 +1,7 @@
 # MacroEverything
+[![Lastest](https://img.shields.io/badge/Download-Lastest-green?logo=github&logoColor=white)](https://github.com/Runstia/MacroEverything/releases)
+[![Discord](https://img.shields.io/badge/Join%20our-Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/2YWKqU4DQa)
+[![Buymeacoffee](https://img.shields.io/badge/Support%20me%20through-BuyMeACoffee-yellow?logo=buymeacoffee&logoColor=white)](https://buymeacoffee.com/runstia)
 
 > 🇫🇷 [Version française](README.FR.md)
 
@@ -137,4 +140,4 @@ MacroEverything/
 
 # Credits
 
-NEKOCHONNE - icon for the executable
+NEKO-CHAN! - icon for the executable
